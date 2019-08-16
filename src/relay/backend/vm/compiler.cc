@@ -816,6 +816,7 @@ void VMCompiler::Compile(const Module& mod_ref,
   vm_->functions.resize(context_.module->functions.size());
 
   for (auto named_func : context_.module->functions) {
+    // actually there is only one named_func here: GlobalVar(main)
     auto gvar = named_func.first;
     auto func = named_func.second;
     VMFunctionCompiler func_compiler(&context_, targets_, target_host_);
@@ -850,12 +851,67 @@ Module VMCompiler::OptimizeModule(const Module& mod) {
                              transform::InlinePrimitives(),
                              // TODO(@wweic): FuseOps pass currently don't handle Let
                              // For now, we put FuseOps before ToANormalForm to enable it
+                             transform::AlterOpLayout(),
                              transform::FuseOps(),
                              transform::ToANormalForm(),
                              transform::LambdaLift(),
                              transform::InlinePrimitives()});
   auto pass_ctx = transform::PassContext::Create();
-  tvm::With<relay::transform::PassContext> ctx(pass_ctx);
+
+  //
+  pass_ctx->opt_level = 3;
+  pass_ctx->fallback_device = 1;
+  //tvm::With<relay::transform::PassContext> ctx(pass_ctx);
+  {
+    tvm::With<relay::transform::PassContext> ctx_scope(pass_ctx);
+    tvm::With<tvm::Target> tctx(tvm::Target::Create("llvm"));
+    return seq(mod);
+  }
+
+
+  tvm::With<tvm::Target> tctx(tvm::Target::Create("llvm"));
+  /*
+      pass_seqs.push_back(transform::EliminateCommonSubexpr(fskip));
+    pass_seqs.push_back(transform::CombineParallelConv2D(3));
+    pass_seqs.push_back(transform::FoldConstant());
+    pass_seqs.push_back(transform::FoldScaleAxis());
+    pass_seqs.push_back(transform::CanonicalizeCast());
+    pass_seqs.push_back(transform::CanonicalizeOps());
+
+    // Legalize pass is restricted to homogeneous execution for now.
+    if (targets.size() == 1) {
+      pass_seqs.push_back(transform::Legalize());
+    }
+
+    // Alter layout transformation is only applied to homogeneous execution yet.
+    if (targets.size() == 1) {
+      pass_seqs.push_back(transform::AlterOpLayout());
+    }
+    pass_seqs.push_back(transform::FoldConstant());
+
+    // Create a sequential pass and perform optimizations.
+    transform::Pass seq = transform::Sequential(pass_seqs);
+    if (targets.size() == 1) {
+      for (const auto& kv : targets) {
+        With<Target> tctx(kv.second);
+        relay_module = seq(relay_module);
+      }
+    } else {
+      relay_module = seq(relay_module);
+    }
+
+    // Handle heterogeneous compilation.
+    transform::PassContext pass_ctx = PassContext::Current();
+    if (targets_.size() > 1) {
+      relay_module =
+          RunDeviceAnnotationPass(relay_module, pass_ctx->fallback_device);
+    }
+
+    // Fuse the operations if it is needed.
+    relay_module = transform::FuseOps()(relay_module);
+    relay_module = transform::InferType()(relay_module);
+  */
+
   return seq(mod);
 }
 
