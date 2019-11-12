@@ -496,4 +496,3 @@ if __name__ == '__main__':
         sut.test_forward_pool3d(keras=k)
         sut.test_forward_upsample3d(keras=k)
         sut.test_forward_zero_padding3d(keras=k)
-
