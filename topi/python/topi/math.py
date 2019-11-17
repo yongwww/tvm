@@ -283,12 +283,12 @@ def isfinite(x):
 
     Parameters
     ----------
-    x : tvm.Tensor
+    x : tvm.te.Tensor
         Input argument.
 
     Returns
     -------
-    y : tvm.Tensor
+    y : tvm.te.Tensor
         The result.
     """
     return te.compute(x.shape, lambda *i: te.isfinite(x(*i)))
@@ -300,12 +300,12 @@ def isinf(x):
 
     Parameters
     ----------
-    x : tvm.Tensor
+    x : tvm.te.Tensor
         Input argument.
 
     Returns
     -------
-    y : tvm.Tensor
+    y : tvm.te.Tensor
         The result.
     """
     return te.compute(x.shape, lambda *i: te.isinf(x(*i)))
@@ -525,12 +525,12 @@ def fast_tanh(x):
 
     Parameters
     ----------
-    x : tvm.Tensor
+    x : tvm.te.Tensor
         Input argument.
 
     Returns
     -------
-    y : tvm.Tensor
+    y : tvm.te.Tensor
         The result.
     """
     return cpp.fast_tanh(x, x.dtype, tag.ELEMWISE)
