@@ -168,9 +168,9 @@ def get_const_tuple(in_tuple):
     for elem in in_tuple:
         if isinstance(elem, tvm.tir.Var):
             ret.append(elem)
-        elif not isinstance(elem, (tvm.tir.IntImm, tvm.tir.UIntImm, int)):
-            elem = tvm.tir.ir_pass.Simplify(elem) if isinstance(elem, Integral) else 1
-            if not isinstance(elem, (tvm.tir.IntImm, tvm.tir.UIntImm)):
+        elif not isinstance(elem, (tvm.tir.IntImm, int)):
+            elem = tvm.tir.ir_pass.Simplify(elem)
+            if not isinstance(elem, tvm.tir.IntImm):
                 ret.append(elem)
         else:
             ret.append(get_const_int(elem))
