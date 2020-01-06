@@ -119,13 +119,13 @@ def _argx(func, func_name):
     return _impl
 
 def _elemwise(name):
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         assert len(inputs) == 2, "{} take 2 inputs, {} given".format(name, len(inputs))
         return get_relay_op(name)(*inputs)
     return _impl
 
 def _pool3d(name):
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         attr['data_format'] = attr['data_format'].decode("utf-8")
         flip_layout = False
 
@@ -189,7 +189,7 @@ def _pool3d(name):
     return _impl
 
 def _pooling(name):
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
 
         attr['data_format'] = attr['data_format'].decode("utf-8")
         flip_layout = False
@@ -257,7 +257,7 @@ def _pooling(name):
     return _impl
 
 def _conv(opname):
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         attr['data_format'] = attr['data_format'].decode("utf-8")
         flip_layout = False
 
@@ -411,7 +411,7 @@ def _conv(opname):
     return _impl
 
 def _conv3d(opname):
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         attr['data_format'] = attr['data_format'].decode("utf-8")
         flip_layout = False
 
@@ -535,14 +535,14 @@ def _conv3d(opname):
     return _impl
 
 def _decode_image():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         # Image decode wrapper: Expecting user to feed decoded input to next layer drop this layer.
         warnings.warn("DecodeJpeg: It's a pass through, please handle preprocessing before input")
         return inputs[0]
     return _impl
 
 def _crop_and_resize():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         # input image is a 4-D tensor of shape [batch, image_height, image_width, depth]
         # boxes is a 2-D tensor of shape [num_boxes, 4], 4 is for [y1, x1, y2, x2]
         try:
@@ -590,12 +590,12 @@ def _crop_and_resize():
     return _impl
 
 def _cast():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         return inputs[0].astype(attr['DstT'].name)
     return _impl
 
 def _expand_dims():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         dim_input = inputs.pop(1)
         axis = _get_num_param(params, dim_input)
         return AttrCvt(op_name="expand_dims", ignores=['Tdim', 'N'],
@@ -603,7 +603,7 @@ def _expand_dims():
     return _impl
 
 def _resize(method):
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         output_shape0 = attr['_output_shapes'][0]
         # Dynamic size models might have _output_shapes attr equal to [None] here
         size = output_shape0[1:3] if output_shape0 is not None else [-1, -1]
@@ -627,7 +627,7 @@ def _resize(method):
     return _impl
 
 def _check_numerics():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         # Making a copy node assuming no need to verify
         return AttrCvt(op_name="copy", ignores=['message'])(inputs, attr)
     return _impl
@@ -640,7 +640,7 @@ def _assert():
     return _no_op()
 
 def _no_op():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         # ToDo: This should really be an op that returns nothing, which could
         # be represented as an empty tuple. It turns out that TVM
         # infrastructure doesn't like running functions that return None and
@@ -652,7 +652,7 @@ def _no_op():
     return _impl
 
 def _matmul():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         channels = _infer_channels(inputs[1], not attr['transpose_b'])
         if attr['transpose_a']:
             inputs[0] = _op.transpose(inputs[0], axes=(1, 0))
@@ -665,7 +665,7 @@ def _matmul():
     return _impl
 
 def _batch_matmul():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         input_x = inputs[0]
         input_y = inputs[1]
         orig_shape_x = attr['_input_shapes'][input_x]
@@ -697,12 +697,12 @@ def _batch_matmul():
     return _impl
 
 def _identity():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         return inputs[0]
     return _impl
 
 def _concatV2():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         pop_node = inputs.pop(len(inputs)-1)
         axis = int(_get_num_param(params, pop_node))
         return AttrCvt(
@@ -711,7 +711,7 @@ def _concatV2():
     return _impl
 
 def _concat():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         pop_node = inputs.pop(0)
         axis = int(_get_num_param(params, pop_node))
         return AttrCvt(
@@ -720,7 +720,7 @@ def _concat():
     return _impl
 
 def _pack():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         axis = int(attr["axis"])
         inputs_reshaped = [_op.expand_dims(i, axis=axis, num_newaxis=1) for i in inputs]
         return _op.concatenate(inputs_reshaped, axis)
@@ -790,8 +790,13 @@ def _tensor_array_concat():
     return _impl
 
 def _tile():
-    def _impl(inputs, attr, params):
-        reps = _get_list_param(params, inputs.pop())
+    def _impl(inputs, attr, params, mod):
+        reps_input = inputs.pop()
+        if isinstance(reps_input, _expr.Call):
+            np_reps = _infer_value(reps_input, params).asnumpy()
+            reps = [np_reps.flatten()[i] for i in range(np_reps.flatten().shape[0])]
+        else:
+            reps = _get_list_param(params, reps_input)
         new_input = []
         new_input.append(inputs.pop(0))
 
@@ -802,7 +807,7 @@ def _tile():
     return _impl
 
 def _slice():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         try:
             begin = _get_list_param(params, inputs[1])
         except (IndexError, KeyError, AttributeError):
@@ -824,7 +829,7 @@ def _slice():
 
 
 def _reshape():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         pop_node = inputs.pop(1)
 
         try:
@@ -853,7 +858,7 @@ def _reshape():
 
 
 def _depth_to_space():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         block_size = int(attr['block_size'])
         layout = attr['data_format'].decode("utf-8")
         return _op.nn.depth_to_space(inputs[0], block_size, layout)
@@ -862,7 +867,7 @@ def _depth_to_space():
 
 
 def _space_to_depth():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         block_size = int(attr['block_size'])
         layout = attr['data_format'].decode("utf-8")
         return _op.nn.space_to_depth(inputs[0], block_size, layout)
@@ -871,7 +876,7 @@ def _space_to_depth():
 
 
 def _bias_add():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         # Must expand for proper broadcasting in NCHW.
         if attr['data_format'].decode("utf-8") == 'NCHW':
             bias = _op.reshape(inputs[1], newshape=(1, -1, 1, 1))
@@ -881,7 +886,7 @@ def _bias_add():
     return _impl
 
 def _broadcast_to():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         if isinstance(inputs[1], _expr.Var):
             shape = params[inputs[1].name_hint]
         else:
@@ -891,7 +896,7 @@ def _broadcast_to():
     return _impl
 
 def _squeeze():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         if len(attr['squeeze_dims']) == 0:
             attr['squeeze_dims'] = None
         return AttrCvt(
@@ -901,7 +906,7 @@ def _squeeze():
     return _impl
 
 def _fused_batch_norm():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         # Tensorflow: (data, gamma, beta, moving_mean, moving_variance)
         # Relay:       (data, gamma, beta, moving_mean, moving_varience)
         axis = 3
@@ -928,7 +933,7 @@ def _fused_batch_norm():
     return _impl
 
 def _batch_norm():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         # Rearrange inputs from
         # (data, moving_mean, moving_variance, beta, gamma)
         #     to
@@ -950,12 +955,12 @@ def _batch_norm():
     return _impl
 
 def _relu6():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         return _op.clip(inputs[0], a_min=0, a_max=6)
     return _impl
 
 def _shape():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         is_symbolic_shape = False
         for axis in attr['_input_shapes'][inputs[0]]:
             if not isinstance(axis, (int, tvm.expr.IntImm, tvm.expr.UIntImm)):
@@ -971,7 +976,7 @@ def _shape():
     return _impl
 
 def _fill():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         output_shape = attr['_output_shapes'][0]
         # Output shape must be defined to avoid errors. If any axis is not, we must
         # try to compute its shape.
@@ -985,7 +990,7 @@ def _fill():
     return _impl
 
 def _lrn():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         attr_new = {}
         depth_radius = attr.get('depth_radius', 5)
         size = (depth_radius * 2) + 1
@@ -998,7 +1003,7 @@ def _lrn():
     return _impl
 
 def _sum():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         axis = _get_tuple_param(params, inputs[1])
         return AttrCvt(
             op_name='sum',
@@ -1008,7 +1013,7 @@ def _sum():
     return _impl
 
 def _reduce(op):
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         axis = _get_list_param(params, inputs[1])
         axis = tuple(axis)
         return AttrCvt(
@@ -1019,13 +1024,13 @@ def _reduce(op):
     return _impl
 
 def _square():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         return _op.multiply(inputs[0], inputs[0])
     return _impl
 
 def _gather():
     "GatherV2, Gather"
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         if len(inputs) > 2:
             axis = _get_num_param(params, inputs.pop(2))
         else:
@@ -1042,7 +1047,7 @@ def _gather():
 
 def _gather_nd():
     """GatherNd"""
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         return AttrCvt(op_name="gather_nd",
                        ignores=['Tindices', 'Tparams',\
                                 'Taxis', '_class'])(inputs, attr)
@@ -1152,7 +1157,7 @@ def _stridedSlice():
     return _impl
 
 def _pad(name):
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         padlist = _get_param(params, inputs[1])
         paddings = tuple(tuple(l) for l in padlist)
         attr['pad_width'] = paddings
@@ -1167,7 +1172,7 @@ def _pad(name):
     return _impl
 
 def _mirror_pad():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         padlist = _get_param(params, inputs[1])
         paddings = tuple(tuple(l) for l in padlist)
         attr['pad_width'] = paddings
@@ -1180,7 +1185,7 @@ def _mirror_pad():
     return _impl
 
 def _transpose():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         # If perm is not specified, axes is left empty,
         # otherwise its value is get from params
         try:
@@ -1191,21 +1196,21 @@ def _transpose():
     return _impl
 
 def _where():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         if len(inputs) == 1:
             return AttrCvt(op_name="argwhere")(inputs, attr)
         return AttrCvt(op_name="where")(inputs, attr)
     return _impl
 
 def _clip_by_value():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         a_min = _get_num_param(params, inputs[1])
         a_max = _get_num_param(params, inputs[2])
         return _op.clip(inputs[0], a_min=a_min, a_max=a_max)
     return _impl
 
 def _reverse_v2():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         axis = _get_num_param(params, inputs[1])
         return AttrCvt(
             op_name="reverse",
@@ -1214,7 +1219,7 @@ def _reverse_v2():
     return _impl
 
 def _rank():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         input_shape = attr['_input_shapes'][inputs[0]]
 
         name = attr["_node_name"]
@@ -1227,7 +1232,7 @@ def _rank():
 
 
 def _range():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         start = _get_param(params, inputs[0])[0]
         if hasattr(inputs[1], "name_hint") or isinstance(inputs[1], _expr.Constant):
             limit = _get_param(params, inputs[1])[0]
@@ -1249,7 +1254,7 @@ def _range():
 
 
 def _elu():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         dtype = attr['T'].name
         alpha = tvm.relay.const(-1.0, dtype)
         return alpha * _op.nn.relu(tvm.relay.const(1, dtype) \
@@ -1257,7 +1262,7 @@ def _elu():
     return _impl
 
 def _selu():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         dtype = attr['T'].name
         alpha = tvm.relay.const(-1.6732632423543772848170429916717, dtype)
         gamma = tvm.relay.const(1.0507009873554804934193349852946, dtype)
@@ -1266,7 +1271,7 @@ def _selu():
     return _impl
 
 def _mean():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         axis = _get_tuple_param(params, inputs[1])
         return AttrCvt(op_name="mean", ignores=['Tdim', 'Tidx'],
                        transforms={'keep_dims': 'keepdims'},
@@ -1274,7 +1279,7 @@ def _mean():
     return _impl
 
 def _broadcast(name):
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         return AttrCvt(
             op_name=name,
             ignores=['name', 'Tidx']
@@ -1283,7 +1288,7 @@ def _broadcast(name):
 
 def _split(has_size_vector):
     # TF documentation https://www.tensorflow.org/api_docs/python/tf/split
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         try:
             # order and number of inputs are different:
             # if has_size_vector:
@@ -1315,7 +1320,7 @@ def _split(has_size_vector):
     return _impl
 
 def _unpack():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         input_node = inputs[0]
         axis = attr['axis']
         input_shape = attr['_input_shapes'][input_node]
@@ -1336,14 +1341,14 @@ def _unpack():
     return _impl
 
 def _softmax():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         return AttrCvt(op_name='softmax',
                        transforms={'axis': ('axis', 1)})([inputs[0]], attr)
     return _impl
 
 def _softplus():
     # op description: https://www.tensorflow.org/api_docs/python/tf/math/softplus
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         exp_out = AttrCvt('exp')(inputs, attr)
         inputs.append(tvm.relay.const(1, attr['T'].name))
         rh = tvm.relay.const(1, attr['T'].name)
@@ -1352,7 +1357,7 @@ def _softplus():
     return _impl
 
 def _topk():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         k = int(_get_num_param(params, inputs.pop(1)))
         if k < 1:
             raise tvm.error.OpAttributeInvalid(
@@ -1366,24 +1371,24 @@ def _topk():
     return _impl
 
 def _floordiv():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         assert len(inputs) == 2
         return AttrCvt('floor_divide')(inputs, attr)
     return _impl
 
 def _floormod():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         assert len(inputs) == 2
         return AttrCvt('floor_mod')(inputs, attr)
     return _impl
 
 def _logical(name):
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         return AttrCvt(op_name=name)(inputs, attr)
     return _impl
 
 def _space_to_batch_nd():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         input_node = inputs[0]
         input_shape = attr['_input_shapes'][input_node]
         block_shape = _get_list_param(params, inputs[1])
@@ -1422,7 +1427,7 @@ def _space_to_batch_nd():
 
 
 def _batch_to_space_nd():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         input_node = inputs[0]
         input_shape = attr['_input_shapes'][input_node]
         block_shape = _get_list_param(params, inputs[1])
@@ -1469,7 +1474,7 @@ def _batch_to_space_nd():
 
 
 def _prod():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         axis = _get_num_param(params, inputs[1])
         keepdims = attr['keep_dims']
         return _op.prod(inputs[0], int(axis), keepdims=keepdims)
@@ -1477,14 +1482,14 @@ def _prod():
 
 def _log1p():
     # op description: https://www.tensorflow.org/api_docs/python/tf/math/log1p
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         one = tvm.relay.const(1, attr['T'].name)
         add_out = get_relay_op('add')(inputs[0], one)
         return get_relay_op('log')(add_out)
     return _impl
 
 def _one_hot():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         depth = int(_get_num_param(params, inputs[1]))
         dtype = attr['T'].name
 
@@ -1499,20 +1504,20 @@ def _one_hot():
     return _impl
 
 def _squared_difference():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         difference = _op.subtract(inputs[0], inputs[1])
         return _op.multiply(difference, difference)
     return _impl
 
 def _size():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         new_attr = attr
         new_attr['out_type'] = attr['out_type'].name
         return AttrCvt('ndarray_size', transforms={'out_type' : 'dtype'})(inputs, new_attr)
     return _impl
 
 def _add_n():
-    def _impl(inputs, attr, params):
+    def _impl(inputs, attr, params, mod):
         if not isinstance(inputs, tuple):
             inputs = list(inputs)
         assert len(inputs) > 0, "add_n take >=1 inputs, but 0 given."
@@ -2643,12 +2648,10 @@ class GraphProto(object):
         if op_name in identity_list:
             sym = get_relay_op(op_name)(*inputs, **attrs)
         elif op_name in convert_map:
-            if _need_prelude_for_shape_inference(op_name):
+            if 'TensorArray' in op_name:
                 sym = convert_map[op_name](inputs, attrs, self._params, self._prelude)
-            elif _need_module_for_shape_inference(op_name):
-                sym = convert_map[op_name](inputs, attrs, self._params, self._mod)
             else:
-                sym = convert_map[op_name](inputs, attrs, self._params)
+                sym = convert_map[op_name](inputs, attrs, self._params, self._mod)
 
         elif op_name in convert_map_rnn:
             sym = self._convert_rnn_operator(op_name, inputs, attrs,
