@@ -5,28 +5,6 @@ import time
 from tvm import relay
 from tvm.relay.frontend.tensorflow_parser import TFParser
 
-def run_vm(model_path):
-
-    input_name = "image_tensor"
-    input_shape = (1, 512, 512, 3)
-    graph_def = TFParser(model_path).parse()
-    mod, params = relay.frontend.from_tensorflow(graph_def, shape={input_name: input_shape}, layout="NCHW")
-
-    print("Relay IR: {}".format(mod))
-    import time
-    start_time = time.time()
-    print("staring to build")
-    with relay.build_config(opt_level=3):#, disabled_pass=["AlterOpLayout"]):
-        exe = relay.vm.compile(mod, "llvm", params=params)
-    vm = relay.vm.VirtualMachine(exe)
-    vm_create_time = time.time()
-    vm.init(tvm.cpu())
-    data = np.random.randint(250, size=input_shape).astype("uint8")
-    print("starting to do inference")
-    vm_ret = vm.run(data)
-    print("vm result: ", vm_ret.asnumpy())
-    print("############# FINISHED ############")
-
 def benchmark(model_path, inputs={}, outputs=[]):
     def run_tf_graph(sess, input_data, input_node, output_node):
         """ Generic function to execute tensorflow """
@@ -123,14 +101,37 @@ def benchmark(model_path, inputs={}, outputs=[]):
 
     data = np.random.randint(250, size=input_shape).astype("float32")
 
+    print("############# Starting to run with TensorFlow ############")
+    # A prefix that will be prepended to the names in graph_def
+    PREFIX = "import"
+    UNLIKELY_OUTPUT_TYPES = {"Const", "Assign", "NoOp", "Placeholder"}
+    _graph = _load_frozen_graph(model_path)
+    input_tensor_names, output_tensor_names = _get_input_and_output_names(_graph)
+    print("input_tensor_names: {}\n, output_tensor_names: {}"
+          .format(input_tensor_names, output_tensor_names))
+    with tf.compat.v1.Session(graph=_graph) as sess:
+        tf_output = run_tf_graph(
+            sess, data, list(inputs.keys())[0], outputs[0])
+        print("tf_output: {}".format(tf_output))
+
+    print("############# Finish inference with TensorFlow ############")
 
     print("Starting to parse the graph to relay ir")
     graph_def = TFParser(model_path).parse()
     outs = [output[7:] if output.startswith('import/') else output for output in outputs ]
     mod, params = relay.frontend.from_tensorflow(graph_def, shape={input_name: input_shape},
-                                                 outputs=outs,
-                                                 layout="NCHW")
+                                                 outputs=outs)
 
+   # convertlayout pass
+    def run_opt_pass(expr, passes):
+        passes = passes if isinstance(passes, list) else [passes]
+        mod = relay.Module.from_expr(expr)
+        seq = relay.transform.Sequential(passes)
+        with relay.transform.PassContext(opt_level=3):
+            mod = seq(mod)
+        return mod
+    # new_mod = run_opt_pass(mod['main'], relay.transform.ConvertLayout('NCHW'))
+    
     print("############# Starting to run with TVM Relay VM ############")
     # print("Relay IR: {}".format(mod))
     print("starting to build")
@@ -138,7 +139,9 @@ def benchmark(model_path, inputs={}, outputs=[]):
     with relay.build_config(opt_level=3):
         exe = relay.vm.compile(mod, tgt, params=params)
     print("build done")
+    # vm = relay.vm.VirtualMachine(exe)
     vm = relay.vm.VirtualMachine(exe)
+    # vm = relay.profiler_vm.VirtualMachineProfiler(exe) #relay.vm.VirtualMachine(exe)
     vm.init(tvm.cpu())
 
     print("starting to do inference and measurement")
@@ -153,16 +156,15 @@ def benchmark(model_path, inputs={}, outputs=[]):
     vm_exec_time = (vm_end_time - vm_start_time) * 1000 / 50
     print("vm execution time: ", vm_exec_time)
     print("vm result: ", vm_ret.asnumpy())
-
+    # print("profiling:\n{}".format(vm.get_stat()))
     print("############# Finish inference with TVM Relay VM ############")
-
 
     print("############# Starting to run with TVM Graph Runtime ############")
 
     # print("Relay IR: {}".format(mod))
     print("starting to build")
     with relay.build_config(opt_level=3):
-        graph, lib, params = relay.build(mod, "llvm", None, params)
+        graph, lib, params = relay.build(mod, tgt, None, params)
 
     ctx = tvm.context("llvm", 0)
     from tvm.contrib import graph_runtime
@@ -191,26 +193,12 @@ def benchmark(model_path, inputs={}, outputs=[]):
     print("############# Finish inference with TVM Graph Runtime ############")
 
 
-    print("############# Starting to run with TensorFlow ############")
-    # A prefix that will be prepended to the names in graph_def
-    PREFIX = "import"
-    UNLIKELY_OUTPUT_TYPES = {"Const", "Assign", "NoOp", "Placeholder"}
-    _graph = _load_frozen_graph(model_path)
-    input_tensor_names, output_tensor_names = _get_input_and_output_names(_graph)
-    print("input_tensor_names: {}\n, output_tensor_names: {}"
-          .format(input_tensor_names, output_tensor_names))
-    with tf.compat.v1.Session(graph=_graph) as sess:
-        tf_output = run_tf_graph(
-            sess, data, list(inputs.keys())[0], outputs[0])
-        print("tf_output: {}".format(tf_output))
-
-    print("############# Finish inference with TensorFlow ############")
-
     tvm.testing.assert_allclose(vm_ret.asnumpy(), tf_output[0],  rtol=1e-3, atol=1e-3)
 
 if __name__ == '__main__':
+    # https://github.com/wizyoung/YOLOv3_TensorFlow
     # yolo-v3: https://drive.google.com/file/d/1UfQyGw4Y8HOjTlOx0Mq1V1BpREPlBgAc/view?usp=sharing
     yolo_inputs = {'import/input/input_data:0': (1, 416, 416, 3)}
     # yolo_outs = ['import/pred_lbbox/concat_2:0', 'import/pred_mbbox/concat_2:0', 'import/pred_sbbox/concat_2:0']
     yolo_outs = ['import/pred_sbbox/concat_2:0']
-    benchmark("/Users/yongwu/Desktop/TVM/models/OD/yolo/yolov3_coco.pb", yolo_inputs, yolo_outs)
+    benchmark("/home/ubuntu/TVM/models/yolov3_coco.pb", yolo_inputs, yolo_outs)
