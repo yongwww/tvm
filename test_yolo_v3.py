@@ -134,8 +134,9 @@ def benchmark(model_path, inputs={}, outputs=[]):
     print("############# Starting to run with TVM Relay VM ############")
     # print("Relay IR: {}".format(mod))
     print("starting to build")
+    tgt = "llvm -mcpu=skylake-avx512"
     with relay.build_config(opt_level=3):
-        exe = relay.vm.compile(mod, "llvm", params=params)
+        exe = relay.vm.compile(mod, tgt, params=params)
     print("build done")
     vm = relay.vm.VirtualMachine(exe)
     vm.init(tvm.cpu())
