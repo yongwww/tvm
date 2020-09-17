@@ -2488,7 +2488,7 @@ bool UnbindRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
 
   std::vector<Type> fields;
   auto tuple_size = data->shape[axis].as<IntImmNode>()->value;
-  //todo (yongwww): tuple_size could be Any()
+  // todo (yongwww): tuple_size could be Any()
   for (size_t i = 0; i < tuple_size; ++i) {
     std::vector<IndexExpr> oshape;
     // dimension axis needs to be removed
@@ -2511,7 +2511,6 @@ Array<te::Tensor> UnbindCompute(const Attrs& attrs, const Array<te::Tensor>& inp
   const auto param = attrs.as<UnbindAttrs>();
   CHECK(param != nullptr);
   return Array<te::Tensor>{topi::unbind(inputs[0], param->axis)};
-
 }
 
 Expr MakeUnbind(Expr data, int axis) {

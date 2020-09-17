@@ -717,14 +717,25 @@ def split_shape_func(attrs, inputs, _):
 @script
 def _unbind_shape_func(data_shape, axis):
     ele_shape = output_tensor((data_shape.shape[0] - 1,), "int64")
-    # tup_len = output_tensor((1,), "int64")
+    tup_len = output_tensor((1,), "int64")
     # tup_len[0] = data_shape[axis]
     for i in const_range(data_shape.shape[0]):
         if i < axis:
             ele_shape[i] = data_shape[i]
         elif i > axis:
             ele_shape[i-1] = data_shape[i]
-    return ele_shape
+    tup_size = data_shape[axis]
+    #ret = [0] * tup_size
+
+    ret = tuple(i for i in [ele_shape, tup_len])
+
+    return ret
+    # return (ele_shape)
+    """
+    for i in const_range(tup_size):
+        ret[i] = output_tensor((1,), "int64")
+    return (ret)
+    """
 
 
 @_reg.register_shape_func("unbind", False)
@@ -733,6 +744,13 @@ def unbind_shape_func(attrs, inputs, _):
     Shape function for unbind op.
     """
     axis = 0 if attrs.axis is None else get_const_int(attrs.axis)
+    ###### debuging purpose #######
+    tmp = _unbind_shape_func(inputs[0], convert(axis))
+    print(" attrs: {}\n inputs: {}\ntype of inputs: {}"
+          .format(attrs, inputs, type(inputs)))
+    print("axis: ", axis)
+    print("hybrid unbind return: {}\ntype of return: ".format(tmp, type(tmp)))
+    ################################
     tup_len = 1 # todo, need to figure out data_shape[axis]
     return [_unbind_shape_func(inputs[0], convert(axis)) for i in range(tup_len)]
 
