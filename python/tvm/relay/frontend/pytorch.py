@@ -2086,6 +2086,68 @@ def _stack(prelude):
     return _impl
 
 
+def _tensor_array_unstack(prelude):
+
+    def _impl(inputs, input_types):
+        data_input = inputs[0]
+        dim = int(inputs[1])
+        data_shape = _infer_shape(inputs[0], prelude.mod)
+        data_rank = len(data_shape)
+        data_dtype = input_types[0]
+
+        # print for debugging purpose
+        print("inputs: ", inputs)
+        print("input_types: ", input_types)
+        print("shape: ", data_shape)
+        print("prelude attrs: ", vars(prelude))
+
+        # transpose if dim is not 0, beacuse tensor_array_unstack only applied to axis=0
+        if dim != 0:
+            axes = [dim] + list(range(dim)) + list(range(dim + 1, data_rank))
+            data_input = _op.transpose(inputs[0], axes=axes)
+
+        # unstack_name = "tensor_array_unstack_tensor{}".format(data_rank)
+        # unstack_function = prelude.get_var(unstack_name, data_dtype)
+        # unstacked = unstack_function(data_input)
+
+        static_tensor_array_ops = StaticTensorArrayOps(prelude, data_dtype, data_shape)
+        static_tensor_array_ops.register()
+        unstack_function = prelude.get_var_static(
+            "tensor_array_unstack", data_dtype, data_shape
+        )
+        unstacked = unstack_function(data_input)
+
+        # print for debugging
+        print("registered prelude attrs: ", vars(prelude))
+
+        # get tensor data, comment out since list of shape as out_shape doesn't supported?
+        # ele_shape = []
+        # for dm, i in enumerate(data_shape):
+        #     if dm != dim:
+        #        ele_shape.append(i)
+        # out_shape = []
+        # tuple_size = data_shape[dim]  # TODO how to handle any here?
+        # out_shape = (tuple(ele_shape),) * tuple_size
+        # static_tensor_array_ops = StaticTensorArrayOps(prelude, data_dtype, out_shape)
+        # static_tensor_array_ops.register()
+        # get_data_func = prelude.get_var_static("tensor_get_data", "float32", out_shape)
+        # out_tensor = get_data_func(unstacked)
+
+        # error w/o TupleWrapper
+        selections = data_shape[dim]
+        out = _expr.TupleWrapper(unstacked, selections) # _expr.TupleWrapper(out_tensor, selections)
+        return out
+
+    return _impl
+
+
+def _unstack(prelude):
+    def _impl(inputs, input_types):
+        return _tensor_array_unstack(prelude)(inputs, input_types)
+
+    return _impl
+
+
 def _rsub():
     def _impl(inputs, input_types):
         data0, data1 = _pytorch_promote_types(inputs[:2], input_types[:2])
@@ -2241,6 +2303,7 @@ def _unbind():
         return ret
 
     return _impl
+
 
 
 def _shape_as_tensor(prelude):
@@ -2538,7 +2601,7 @@ def _get_convert_map(prelude, default_dtype):
         "aten::slice": _slice(),
         "aten::split": _split(),
         "aten::split_with_sizes": _split_with_sizes(),
-        "aten::unbind": _unbind(),
+        "aten::unbind": _unstack(prelude),#_unbind(),
         "aten::select": _select(),
         "aten::take": _take(),
         "aten::where": _where(),
@@ -2678,7 +2741,6 @@ def _get_convert_map(prelude, default_dtype):
         "torchvision::nms": _nms(prelude),
         "aten::logsumexp": _logsumexp(),
         "torchvision::roi_align": _roi_align(prelude),
-        "aten::unbind": _unbind(),
         "aten::__and__": _logical_and(),
         "aten::_shape_as_tensor": _shape_as_tensor(prelude),
         "aten::nonzero": _nonzero(False),
@@ -3205,6 +3267,7 @@ def convert_operators(operators, outputs, ret_names, convert_map, prelude, defau
     """ Convert each Torch IR operators to Relay equivalent """
     for node_name, op_node in operators:
         operator = op_node.kind()
+        print("processing\npt op:  {}, related op_node: {}".format(operator, op_node))
         inputs = _get_op_inputs(op_node, outputs)
 
         if operator == "prim::Constant":
@@ -3216,12 +3279,19 @@ def convert_operators(operators, outputs, ret_names, convert_map, prelude, defau
             # In this case, we keep the Python list
             outputs[node_name] = inputs
         elif operator == "prim::TupleConstruct":
+            print("debugging yongwww in prim::TupleConstruct")
+            print("inputs of prim::TupleConstruct: ", inputs)
+            print("type of inputs of prim::TupleConstruct: ", type(inputs))
             outputs[node_name] = _expr.Tuple(inputs)
+            #_expr.TupleWrapper(inputs, _expr.const(8, dtype="int32"))
         elif operator in ["prim::ListUnpack", "prim::TupleUnpack"]:
+            print("operator name is ", operator)
+            print("inputs[0] in line 3282: ", inputs[0])
             assert len(inputs) == 1
             if isinstance(inputs[0], (list, _expr.TupleWrapper)):
                 unpacked = inputs[0]
             else:
+                # pass
                 unpacked = _unpack_tuple(inputs[0])
             outputs.update(zip(_get_output_names(op_node), unpacked))
         elif operator == "prim::If":
@@ -3298,6 +3368,9 @@ def from_pytorch(script_module, input_shapes, custom_convert_map=None, default_d
     graph = script_module.graph.copy()
     _run_jit_passes(graph)
 
+    print("###############  PyTorch\n"
+          "----graph-----: \n{}\n######".format(graph))
+
     if custom_convert_map:
         convert_map.update(custom_convert_map)
 
@@ -3331,7 +3404,7 @@ def from_pytorch(script_module, input_shapes, custom_convert_map=None, default_d
         prelude,
         default_dtype=default_dtype,
     )
-
+    print("ret debugging\n", ret)
     mod["main"] = tvm.relay.Function(_analysis.free_vars(ret[0]), ret[0])
 
     return transform.RemoveUnusedFunctions()(mod), tvm_params
