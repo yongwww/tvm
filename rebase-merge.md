@@ -13,16 +13,18 @@ Time: 26 minutes and 29 seconds. There is no conflict! Building and testing occu
 
 ### Merge
 
-`git merge/pull` commit will generate message "Merge commit 'commit-id' into \<Branch Name>", but I would like to maintain the same commit message as upstream, I used `git cherry-pick` for this experiment instead.&#x20;
+`git merge/pull commit-id` automatically generates message like "Merge commit 'commit-id' into \<Branch Name>", the commit message in the related uptream commit id is lost. I would like to maintain the same commit message as upstream, so I used `git cherry-pick` for this experiment instead.&#x20;
 
-```sh
+```shell
 # colllect the commits to be cherry-picked
 git checkout upstream/main
-git rev-list 14bc5e45855f5a80b7c57a53d98bb6016c9bbf53..HEAD > commits.txt # the latest commit in both tvm main and unity 
+# 14bc5e45855f5a80b7c57a53d98bb6016c9bbf53 is the latest commit in both tvm main and unity 
+git rev-list 14bc5e45855f5a80b7c57a53d98bb6016c9bbf53..HEAD > commits.txt
 tac commits.txt > commits.sh
 sed -i -e 's/^/git cherry-pick /' commits.sh
 # cherry-pick
 git checkout unity-cherry-pick-yongwww-2023-02-27-10.5am
 sh commits.sh
+rm commits.txt commits.sh
 ```
-Time:  32 minutes and 08 seconds. Spent some extra time verifying the commit list.
+Time:  32 minutes and 08 seconds. Spent some extra time verifying the commit list manually.
