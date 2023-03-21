@@ -17,7 +17,7 @@
 
 import pytest
 import tvm
-from tvm import relax
+from tvm import relax, topi
 from tvm.ir import structural_equal
 from tvm.ir.base import assert_structural_equal
 
@@ -177,5 +177,34 @@ def test_vm_builtin_lower():
     assert s3.op.global_symbol == "test.op.identity"
 
 
+def test_function_pass():
+    @relax.transform.function_pass(opt_level=2)
+    class EmitAdd:
+        def transform_function(self, func, mod, ctx):
+            @relax.expr_functor.visitor
+            class EmitAdd(relax.PyExprMutator):
+                def visit_call_(self, op):
+                    if op.op.name == "relax.add":
+                        op = self.builder_.emit_te(topi.add, op.args[0], op.args[1])
+                    return super().visit_call_(op)
+
+            rewriter_pass = EmitAdd()
+            new_func = rewriter_pass.visit_expr(func)
+            return new_func
+
+    @tvm.script.ir_module
+    class Mod:
+        @R.function
+        def foo(x: R.Tensor((10, 5), "float32")) -> R.Tensor((10, 5), "float32"):
+            s = R.add(x, x)
+            return s
+
+    func_pass = EmitAdd()
+    assert isinstance(func_pass, relax.transform.FunctionPass)
+    updated_mod = func_pass(Mod)
+    updated_mod.show()
+
+
 if __name__ == "__main__":
-    pytest.main([__file__])
+    # pytest.main([__file__])
+    test_function_pass()

@@ -145,6 +145,7 @@ IRModule FunctionPassNode::operator()(IRModule mod, const PassContext& pass_ctx)
     // only picks up relax::Function
     if (auto* n = it.second.as<FunctionNode>()) {
       Function func = GetRef<Function>(n);
+      //TODO (yongwww): how to get the updated_mod for emit_te
       auto updated_func = SkipFunction(func) ? func : pass_func(func, updated_mod, pass_ctx);
       updates.push_back({it.first, updated_func});
     }
@@ -161,6 +162,9 @@ IRModule FunctionPassNode::operator()(IRModule mod, const PassContext& pass_ctx)
   pass_ctx->diag_ctx = previous;
 
   VLOG(1) << "Output module:" << std::endl << updated_mod;
+  for (const auto& it : mod->functions) {
+    LOG(INFO) << "initial mod gv: " << it.first;
+  }
 
   return updated_mod;
 }
