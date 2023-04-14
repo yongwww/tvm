@@ -20,9 +20,12 @@
 """PyTorch FX frontend of Relax."""
 from typing import Callable, Dict, List, Optional, Tuple, Union
 from functools import reduce
+import operator
+import numpy as np
 
 import tvm
-from tvm import relax
+from tvm import relax, tir
+from torch import fx
 
 
 class TorchFXImporter:
@@ -85,6 +88,20 @@ class TorchFXImporter:
         tensor = tensor.detach().cpu()
         dtype = TorchFXImporter._convert_data_type(str(tensor.data.dtype))
         return relax.const(tensor.data.numpy(), dtype)
+
+    @staticmethod
+    def to_tuple(inputs: Union[tuple, list]) -> relax.Tuple:
+        if len(inputs) == 0:
+            return
+        if len(inputs) == 1:
+            return relax.Tuple(inputs)
+        ret = []
+        for input in inputs:
+            if isinstance(input, (tuple, list)):
+                ret.append(TorchFXImporter.to_tuple(input))
+            else:
+                ret.append(input)
+        return relax.Tuple(ret)
 
     @staticmethod
     def shape_of(tensor):
@@ -167,7 +184,13 @@ class TorchFXImporter:
 
     def _add(self, node: fx.node.Node) -> relax.Expr:
         lhs, rhs = self.retrieve_args(node)
+
+        if isinstance(lhs, relax.Var):
+            print("add lhs: ", lhs.struct_info)
+        if isinstance(rhs, relax.Var):
+            print("add rhs: ", rhs.struct_info)
         if isinstance(lhs, relax.Var) or isinstance(rhs, relax.Var):
+            return lhs # todo(yongwww): fix shape
             return self._call_binary_op(relax.op.add, lhs, rhs)
         elif isinstance(lhs, relax.expr.Constant):
             return self._call_binary_op(
@@ -177,6 +200,30 @@ class TorchFXImporter:
             return self._call_binary_op(
                 relax.op.add, relax.const(lhs, dtype=rhs.struct_info.dtype), rhs
             )
+        # todo (yongwww): working
+        # 1) convert ShapeExpr to Tensor
+        # 2) if the arg is tuple, use relax.tuple, or the first element if size is 1
+        #
+        #if isinstance(rhs, tuple):
+            # assert len(rhs) == 1
+            # rhs = relax.const(list(rhs), "int32")
+        #    rhs = relax.ShapeExpr(rhs)
+        #    print("yongwww rhs: {}", rhs)
+        #    print("rhs type: ", type(rhs))
+        print("lhs: {} \n rhs: {} \n lhs type: {}  --- rhs type: {}"
+              .format(lhs, rhs, type(lhs), type(rhs)))
+        if hasattr(lhs, "struct_info"):
+            print("lhs sinfo: ", lhs.struct_info)
+        if hasattr(rhs, "struct_info"):
+            print("rhs sinfo: ", rhs.struct_info)
+        if isinstance(lhs, relax.ShapeExpr):
+            new_rhs = []
+            for rh in rhs:
+                # relax.PrimValue
+                new_rhs.append(tir.IntImm("int64", rh))
+            new_shape = list(lhs.values) + new_rhs
+            print("new_shape: ", new_shape)
+            return relax.ShapeExpr(new_shape)
         return lhs + rhs
 
     def _max(self, node: fx.node.Node) -> relax.Expr:
@@ -192,7 +239,14 @@ class TorchFXImporter:
 
     def _mul(self, node: fx.node.Node) -> relax.Expr:
         lhs, rhs = self.retrieve_args(node)
+        if isinstance(lhs, relax.Var):
+            print("mul lhs: ", lhs.struct_info)
+            return lhs
+        if isinstance(rhs, relax.Var):
+            print("mul rhs: ", rhs.struct_info)
+            return rhs
         if isinstance(lhs, relax.Var) or isinstance(rhs, relax.Var):
+            return lhs # todo (yongwww): fix shape and dtype issue
             return self._call_binary_op(relax.op.multiply, lhs, rhs)
         return lhs * rhs
 
@@ -308,7 +362,8 @@ class TorchFXImporter:
             return relax.const(node.args[0], dtype if dtype is not None else "float32")
         elif isinstance(node.args[0], int):
             return relax.const(node.args[0], dtype if dtype is not None else "int64")
-        raise ValueError("torch.tensor with value not a float or int is not accepted")
+        return relax.const(self.env[node.args[0]], self.env[node.kwargs["dtype"]])
+        # raise ValueError("torch.tensor with value not a float or int is not accepted")
 
     def _tril_triu(self, op: Callable) -> Callable:
         from torch import fx
@@ -511,21 +566,90 @@ class TorchFXImporter:
         args = self.retrieve_args(node)
         return self.block_builder.emit(relax.op.permute_dims(args[0], args[1:]))
 
+    def _where(self, node: fx.node.Node) -> relax.Var:
+        args = self.retrieve_args(node)
+        return self.block_builder.emit(relax.op.where(args[0], args[1], args[2]))
+
     def _reshape(self, node: fx.node.Node) -> relax.Var:
         import torch  # type: ignore
 
         args = self.retrieve_args(node)
         if isinstance(args[1], (torch.Size, tuple, list)):
             return self.block_builder.emit(relax.op.reshape(args[0], tuple(args[1])))
+        elif isinstance(args[1], relax.ShapeExpr):
+            return self.block_builder.emit(relax.op.reshape(args[0], args[1]))
         return self.block_builder.emit(relax.op.reshape(args[0], args[1:]))
+
+    def _get_embed_positions(self, node: fx.node.Node) -> relax.Expr:
+        args = self.retrieve_args(node)
+
+        repeats = args[1].struct_info.shape[0]
+        return self.block_builder.emit(relax.op.repeat(args[0], int(repeats), axis=0))
+
+    def _repeat(self, node: fx.node.Node) -> relax.Expr:
+        args = self.retrieve_args(node)
+        for i, arg in enumerate(args):
+            print("repeat: the ", i, "th arg: ", arg)
+
+        reps = []
+        for r in args[1:]:
+            reps.append(int(r))
+
+        return self.block_builder.emit(relax.op.tile(args[0], repeats=reps))
+
+    def _repeat_interleave(self, node: fx.node.Node) -> relax.Expr:
+        args = self.retrieve_args(node)
+        data = args[0]
+        if isinstance(args[1], int):
+            repeats = args[1]
+            axis = args[2]
+        elif isinstance(args[1], relax.Expr):
+            if isinstance(args[1], relax.Constant):
+                repeats = int(args[1].data.numpy())
+            axis = args[2]
+        else:
+            msg = "Only repeat with one value as repeat is currently supported."
+            raise ValueError(msg)
+        if axis is None:  # Flatten the data if no axis is given from torch
+            data = self.block_builder.emit(relax.op.reshape(data, [-1]))
+            axis = 0
+        return self.block_builder.emit(relax.op.repeat(data, repeats=repeats, axis=axis))
+
+    def _gather(self, node: fx.node.Node) -> relax.Expr:
+        args = self.retrieve_args(node)
+        for i, arg in enumerate(args):
+            print("gather: the ", i, "th arg: ", arg)
+            if isinstance(arg, relax.Var):
+                print("sinfo: ", arg.struct_info)
+        # todo(yongwww): emit topi gather
+        return args[2]
+        #return self.block_builder.emit(relax.op.gather(args[0], args[1], args[2]))
+
+    def _stack(self, node: fx.node.Node) -> relax.Expr:
+        # TODO (tvm-team) Add stack in Relax
+        args = self.retrieve_args(node)[0]
+        print("stack args: ", args)
+        print("arg[0] sinfo: ", args[0].struct_info)
+        print("arg[1] sinfo: ", args[1].struct_info)
+        new_args = []
+        for arg in args:
+            new_args.append(self.block_builder.emit(relax.op.expand_dims(arg, axis=0)))
+        print("new_args[0] sinfo: ", new_args[0].struct_info)
+        print("new_args[1] sinfo: ", new_args[1].struct_info)
+        ret = self.block_builder.emit(relax.op.concat(new_args, axis=0))
+        print("new shape sinfo: ", ret.struct_info)
+        return ret
 
     def _split(self, node: fx.node.Node) -> relax.Var:
         x = self.env[node.args[0]]
         split_size = node.args[1]
+        if isinstance(split_size, fx.node.Node):
+            split_size = self.env[node.args[1]]
         if "dim" in node.kwargs:
             dim = node.kwargs["dim"]
         else:
             dim = 0
+        print("split: node.args: ", node.args)
         n_section = (self.shape_of(x)[dim].value + split_size - 1) // split_size
         return self.block_builder.emit(relax.op.split(x, n_section, dim))
 
@@ -957,11 +1081,40 @@ class TorchFXImporter:
                 return self.env[node.args[0]].struct_info.dtype
             elif node.args[1] == "shape":
                 return self.shape_of(self.env[node.args[0]])
-        return getattr(self.env[node.args[0]], node.args[1])
+            elif node.args[1] == "device":
+                # print("node.args[0] all attrs: ", dir(node.args[0]))
+                # print("self.env[node.args[0]] sinfo: ", self.env[node.args[0]].struct_info)
+                return self.env[node.args[0]]
+
+        if hasattr(self.env[node.args[0]], node.args[1]):
+            return getattr(self.env[node.args[0]], node.args[1])
+
+        # finfo
+        finfo_ele = node.args[1]
+        print("node.args[1]:finfo_ele:  ", finfo_ele)
+        ret = getattr(np.finfo(self.env[node.args[0]]), finfo_ele)
+        print("finfo ret np: ", ret)
+        return ret
+
+    def _finfo(self, node: fx.node.Node) -> relax.Expr:
+        ret = self.env[node.args[0]]
+        print("finfo ret: ", ret)
+        return ret
 
     def _getitem(self, node: fx.node.Node) -> relax.Var:
         x = self.env[node.args[0]]
-        if isinstance(x, (list, tuple, relax.ShapeExpr, relax.Tuple)):
+        if isinstance(x, relax.ShapeExpr):
+            shape_val = x.values
+            # Handle shape related slice directly with python getitem
+            new_shape = operator.getitem(shape_val, node.args[1])
+            print("_getitem node.args: ", node.args)
+            print("x: ", x)
+            print("new_shape: ", new_shape)
+            if isinstance(new_shape, (tuple, list)):
+                return relax.ShapeExpr(list(new_shape))
+            return new_shape
+
+        elif isinstance(x, (list, tuple, relax.Tuple)):
             return x[node.args[1]]
         elif isinstance(x, relax.Var):
             if isinstance(x.struct_info, relax.TupleStructInfo):
@@ -1015,8 +1168,35 @@ class TorchFXImporter:
                 sliced_shape.insert(i, 1)
             return self.block_builder.emit(relax.op.reshape(sliced, sliced_shape))
         elif isinstance(x, relax.Constant):
+            print("_getitem node.args: ", node.args)
+            print("const x: ", x)
+            print("const x shape: ", x.struct_info.shape)
             dtype = x.struct_info.dtype
-            return relax.const(x.data.numpy()[node.args[1]], dtype)
+            print("x.data.numpy(): ", x.data.numpy())
+            print("node.args[1]: ", node.args[1])
+            new_slices = []
+            for arg in node.args[1]:
+                new_start = arg.start
+                new_stop = arg.stop
+                new_step = arg.step
+                if arg.start is not None and not isinstance(arg.start, int):
+                    new_start = int(self.env[arg.start])
+                    print("old_start: ", arg.start)
+                    print("new_start: ", new_start)
+                if arg.stop is not None and not isinstance(arg.stop, int):
+                    new_stop = int(self.env[arg.stop])
+                    print("old_stop: ", arg.stop)
+                    print("new_stop: ", new_stop)
+                if arg.step is not None and not isinstance(arg.step, int):
+                    new_step = int(self.env[arg.step])
+                    print("old_step: ", arg.step)
+                    print("new_step: ", new_step)
+                new_slices.append(slice(new_start, new_stop, new_step))
+            new_slices = tuple(new_slices)
+            print("new_slices: ", new_slices)
+            #ret = operator.getitem(x.data.numpy(), new_slices)
+            #print("ret: ", ret)
+            return relax.const(x.data.numpy()[new_slices], dtype)
         else:
             assert False
 
@@ -1079,6 +1259,8 @@ class TorchFXImporter:
             "cat": self._cat,
             "expand": self._expand,
             "flatten": self._flatten,
+            "finfo": self._finfo,
+            "where": self._where,
             "permute": self._permute,
             "reshape": self._reshape,
             "split": self._split,
@@ -1103,6 +1285,11 @@ class TorchFXImporter:
             "size": self._size,
             "getattr": self._getattr,
             "getitem": self._getitem,
+            "get_embed_positions": self._get_embed_positions,
+            "repeat": self._repeat,
+            "repeat_interleave": self._repeat_interleave,
+            "gather": self._gather,
+            "stack": self._stack,
             "contiguous": lambda node: self.env[node.args[0]],
             "to": self._to,
             "adaptive_avg_pool2d": self._adaptive_avg_pool2d(is_module=False),
@@ -1168,7 +1355,8 @@ class TorchFXImporter:
                     else:
                         raise ValueError("Unsupported data type for model parameters: %s" % dtype)
                 # Translate the model.
-                for node in graph.nodes:
+                for i, node in enumerate(graph.nodes):
+                    print("Processing the {}th node: {}".format(i, node))
                     if node.op == "placeholder":
                         assert len(inputs) > 0, "Provided inputs is less than actual inputs"
                         self.env[node] = inputs.pop(0)
@@ -1181,6 +1369,10 @@ class TorchFXImporter:
                             and len(args[0]) == 1
                         ):
                             output = self.block_builder.emit_output(args[0][0])
+                        elif isinstance(args[0], (tuple, list)):
+                            # Handle nested tuple
+                            out_tuple = self.to_tuple(args[0])
+                            output = self.block_builder.emit_output(out_tuple)
                         else:
                             output = self.block_builder.emit_output(args[0])
                         break
