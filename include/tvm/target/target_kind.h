@@ -50,7 +50,7 @@ using TargetFeatures = Map<String, ObjectRef>;
  * \return The transformed Target JSON object.
  */
 using TargetJSON = Map<String, ObjectRef>;
-using FTVMTargetParser = TypedPackedFunc<TargetJSON(TargetJSON)>;
+using FTVMTargetParser = tvm::runtime::TypedPackedFunc<TargetJSON(TargetJSON)>;
 
 /*!
  * \brief RelayToTIR tvm::transform::Pass specific to a TargetKind
