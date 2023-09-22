@@ -215,12 +215,13 @@ def build(
           s2 = topi.cuda.schedule_injective(cuda_tgt, [C])
           m1 = tvm.lower(s1, [A, B, C], name="test_add1")
           m2 = tvm.lower(s2, [A, B, C], name="test_add2")
-          rt_mod = tvm.build({"llvm": m1, "cuda": m2})
+          rt_mod = tvm.build({"llvm": m1, "cuda": m2}) # todo (yongwww)
 
     Note
     ----
     See the note on :any:`tvm.target` on target string format.
     """
+    print("224 yongwww inputs: ", inputs)  # todo(yongwww) correct
     if isinstance(inputs, te.Schedule):
         if args is None:
             raise ValueError("args must be given for build from schedule")
@@ -246,18 +247,24 @@ def build(
         target = target if target else "llvm"
         target_input_mod = {target: input_mod}
     else:
-        target_input_mod = inputs
+        # todo (yongwww): working here:
+        # need to lower inputs as well\
+        target_input_mod = {}
+        for tgt, mod in inputs.items():
+            target_input_mod[tgt] = lower(mod)
+        # target_input_mod = inputs
 
     # Because modules can be created from a variety of sources, we annotate them
     # with the relevant attributes here to ensure they propagate
     annotated_mods = {}
-    for tar, mod in target_input_mod.items():
-        if not isinstance(tar, (str, Target)):
+    for tgt, mod in target_input_mod.items():
+        if not isinstance(tgt, (str, Target)):
             raise ValueError("The key of inputs must be str or " "Target when inputs is dict.")
         if not isinstance(mod, tvm.IRModule):
-            raise ValueError("inputs must be Schedule, IRModule," "or dict of str to IRModule.")
-        annotated_mods[tar] = mod.with_attr("runtime", runtime)
+            raise ValueError("inputs must be Schedule, IRModule, " "or dict of str to IRModule.")
+        annotated_mods[tgt] = mod.with_attr("runtime", runtime)
 
+    print("yongwww 261, annotated_mods: ", annotated_mods)
     # TODO(mbs): Both CompilationConfig and TIRToRuntime implement the same host target
     #  defaulting logic, but there's currently no way to get back the decided host.
     if target_host is not None:
@@ -277,10 +284,15 @@ def build(
         target_host = "llvm" if tvm.runtime.enabled("llvm") else "stackvm"
 
     annotated_mods, target_host = Target.canon_target_map_and_host(annotated_mods, target_host)
+    # todo (yongwwww): mod inconsistency issue
+    print("yongwww 280: annotated_mods: ", annotated_mods)
+    print("yongwww 281: target_host: ", target_host)
 
     rt_mod_host = _driver_ffi.tir_to_runtime(annotated_mods, target_host)
 
     annotated_mods, target_host = Target.canon_target_map_and_host(annotated_mods, target_host)
+
+    # raw_targets = Target.canon_multi_target_and_host(target, target_host)
 
     if not isinstance(target_host, Target):
         target_host = Target(target_host)

@@ -75,7 +75,7 @@ PackedFunc WrapPackedFunc(TVMBackendPackedCFunc faddr, const ObjectPtr<Object>& 
                        args.num_args, &ret_value, &ret_type_code, nullptr);
     // NOTE: important to keep the original error message.
     if (ret != 0) {
-      LOG(FATAL) << TVMGetLastError();
+      LOG(FATAL) << TVMGetLastError();  // todo (yongwww)
     }
     if (ret_type_code != kTVMNullptr) {
       *rv = TVMRetValue::MoveFromCHost(ret_value, ret_type_code);

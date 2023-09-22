@@ -39,7 +39,7 @@ def compile(mod, target=None, target_host=None, params=None):
     mod : tvm.IRModule
         The Relay module to build.
 
-    target : any multi-target like object, see Target.canon_multi_target
+    target : any multi-target like object, see Target.canon_multi_target # todo (yongwww)
         For homogeneous compilation, the unique build target.
         For heterogeneous compilation, a dictionary or list of possible build targets.
 
@@ -105,7 +105,7 @@ class VMCompiler(object):
             ret[key] = value.data
         return ret
 
-    def lower(self, mod, target=None, target_host=None):
+    def lower(self, mod, target=None, target_host=None):  # todo(yongwww)
         """Lower the module to VM bytecode.
 
         Parameters

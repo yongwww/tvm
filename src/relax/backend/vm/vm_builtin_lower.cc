@@ -88,6 +88,11 @@ class VMBuiltinLowerMutator : public ExprMutator {
     DataType dtype = output_dtype->value;
     Expr storage_size = ComputeStorageSize(output_shape, dtype);
     PrimValue runtime_device_index = Downcast<PrimValue>(call->args[2]);
+    // TODO(@yongwww): fix device_index here
+    LOG(INFO) << "yongwww 92 vm_builtin_lower, call_node: " << call;
+    for (auto arg : call->args) {
+      LOG(INFO) << "yongwww 94 vm_builtin_lower, call arg: " << arg;
+    }
     Var storage = builder_->Emit(Call(vm_alloc_storage_op_,
                                       {storage_size, runtime_device_index,
                                        DataTypeImm(DataType::UInt(8)), StringImm("global")},

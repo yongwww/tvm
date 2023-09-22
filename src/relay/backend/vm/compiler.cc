@@ -826,7 +826,7 @@ PackedFunc VMCompiler::GetFunction(const String& name, const ObjectPtr<Object>& 
   if (name == "lower") {
     return PackedFunc([sptr_to_self, this](TVMArgs args, TVMRetValue* rv) {
       ICHECK_EQ(args.num_args, 2);
-      this->Lower(args[0], args[1]);
+      this->Lower(args[0], args[1]);  // todo (yongwww) args[1]: targets, args[0]: mod
     });
   } else if (name == "codegen") {
     return PackedFunc([sptr_to_self, this](TVMArgs args, TVMRetValue* rv) {
@@ -869,7 +869,7 @@ void VMCompiler::SetParam(const std::string& name, runtime::NDArray data_in) {
 
 void VMCompiler::Lower(IRModule mod, const Array<Target>& raw_targets) {
   VLOG_CONTEXT << "VM Lower";
-  Setup(raw_targets);
+  Setup(raw_targets);  // todo(yongwww)
   LowerImpl(std::move(mod));
 }
 

@@ -412,11 +412,20 @@ std::pair<IRModule, IRModule> SplitMixedModule(IRModule mod_mixed, const Target&
 
   ICHECK(mod_mixed.defined()) << "This module must be defined";
 
+  LOG(INFO) << "yongwww 415 mod_mixed: " << mod_mixed;
+  LOG(INFO) << "yongwww 416 target: " << target << ", target_host:  " << target_host;
+
   mod_mixed = ApplyPasses(mod_mixed, MixedModulePassManager(mod_mixed, target));
+
+  LOG(INFO) << "yongwww 420";
 
   IRModule host_mod = ApplyPasses(mod_mixed, HostModulePassManager(mod_mixed, target_host));
 
+  LOG(INFO) << "yongwww 424";
+
   IRModule device_mod = ApplyPasses(mod_mixed, DeviceModulePassManager(mod_mixed, target));
+
+  LOG(INFO) << "yongwww 428";
 
   auto keys = target->GetKeys();
 
@@ -448,7 +457,7 @@ void CheckAndUpdateHostConsistency(Map<Target, IRModule>* targets, Target* host)
   *targets = new_targets;
 }
 
-runtime::Module TIRToRuntime(const Map<Target, IRModule>& inputs_arg,
+runtime::Module TIRToRuntime(const Map<Target, IRModule>& inputs_arg,  // todo (yongwww)
                              const Target& target_host_arg) {
   std::vector<runtime::Module> device_modules;
   Map<Target, IRModule> inputs = inputs_arg;
@@ -485,7 +494,13 @@ runtime::Module TIRToRuntime(const Map<Target, IRModule>& inputs_arg,
     if (it.second.defined()) {
       const Target& target = it.first;
       const IRModule& ir_module = it.second;
+      // TODO (yongwwww): working here, ir_module here is not consistent with single mod compile
+      LOG(INFO) << "498 yongwww, start to SplitMixedModule, target: " << target
+                << " -- target_host: " << target_host;
+      LOG(INFO) << "500 yongwww, start to SplitMixedModule, ir_module: "
+                << ir_module;  // todo (yongwww): debug ir module issue
       auto pair = SplitMixedModule(ir_module, target, target_host);
+      LOG(INFO) << "502 yongwww, done the SplitMixedModule";
       auto& host_mod = pair.first;
       auto& device_mod = pair.second;
 

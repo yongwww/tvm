@@ -391,7 +391,7 @@ class VirtualMachine(object):
 
         self.module = exe.mod["vm_load_executable"]()
         self._exec = exe
-        self._init = self.module["init"]
+        self._init = self.module["init"]  #
         self._invoke = self.module["invoke"]
         self._invoke_stateful = self.module["invoke_stateful"]
         self._get_output = self.module["get_output"]

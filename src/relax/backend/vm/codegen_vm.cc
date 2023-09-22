@@ -436,6 +436,7 @@ TVM_REGISTER_GLOBAL("relax.VMCodeGen").set_body_typed(VMCodeGen);
 Module VMLink(ExecBuilder builder, Target target, Optional<Module> lib, Array<Module> ext_libs,
               Map<String, runtime::NDArray> params) {
   // TODO(relax-team) Revisit the param and ext_lib options.
+  // todo (yongwww): target -> multi targets
   ObjectPtr<Executable> executable = builder->Get();
   if (!lib.defined()) {
     lib = codegen::CSourceModuleCreate(";", "", Array<String>{});

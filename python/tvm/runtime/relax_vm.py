@@ -53,7 +53,7 @@ class VirtualMachine(object):
 
         Parameters
         ----------
-        mod: Union[tvm.runtime.Module, tvm.relax.Executable]
+        rt_mod: Union[tvm.runtime.Module, tvm.relax.Executable]
             Runtime module exported by the result of build.
 
         device : Union[Device, List[Device]]
@@ -129,11 +129,13 @@ class VirtualMachine(object):
                 + "but received {}".format(type(memory_cfg))
             )
         init_args = []
-        for device in devs:
+        for device in devs:  # todo(yongwww)
             init_args.append(device.device_type % RPC_SESS_MASK)
             init_args.append(device.device_id)
             alloc_type = memory_cfg[device] if device in memory_cfg else default_alloc_type
             init_args.append(alloc_type)
+        print("137 yongwww _setup_device init_args： ", init_args)  # TODO(@yongwww): update
+        init_args = [1, 0, 2, 2, 0, 2]  # [2, 0, 2, 1, 0, 2]
         self.module["vm_initialization"](*init_args)
 
     def __getitem__(self, key: str) -> PackedFunc:
@@ -219,7 +221,9 @@ class VirtualMachine(object):
         if isinstance(arg, Object):
             cargs.append(arg)
         elif isinstance(arg, np.ndarray):
-            nd_arr = tvm.nd.array(arg, device=tvm.cpu(0))
+            nd_arr = tvm.nd.array(
+                arg, device=tvm.cpu(0)
+            )  # todo (yongwww): check if the device matters: no need to touch
             cargs.append(nd_arr)
         elif isinstance(arg, tvm.runtime.NDArray):
             cargs.append(arg)
@@ -230,7 +234,9 @@ class VirtualMachine(object):
             cargs.append(tuple(field_args))
         elif isinstance(arg, (_base.numeric_types, bool)):
             dtype = _gettype(arg)
-            value = tvm.nd.array(np.array(arg, dtype=dtype), device=tvm.cpu(0))
+            value = tvm.nd.array(
+                np.array(arg, dtype=dtype), device=tvm.cpu(0)
+            )  # todo (yongwww): check if the device matters: no need to touch
             cargs.append(value)
         elif isinstance(arg, str):
             cargs.append(arg)

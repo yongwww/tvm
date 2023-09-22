@@ -518,7 +518,7 @@ void VirtualMachine::LoadExecutable(const ObjectPtr<Executable>& exec) {
   }
 }
 
-void VirtualMachine::Init(const std::vector<Device>& physical_devices,
+void VirtualMachine::Init(const std::vector<Device>& physical_devices,  //
                           const std::vector<AllocatorType>& alloc_types) {
   ICHECK_EQ(physical_devices.size(), alloc_types.size());
 

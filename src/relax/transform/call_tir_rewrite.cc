@@ -63,15 +63,20 @@ class CallTIRMutator : public ExprMutator {
       if (const auto& _tensor_sinfo = MatchStructInfo<TensorStructInfo>(expr)) {
         // single output case
         const TensorStructInfo& tensor_sinfo = _tensor_sinfo.value();
+        // TODO(@yongwww): figure out a better solution, how to get the runtime_device_index?
+        // o1: VDevice(target, dev_id, mem_scope)
+        int dev_index = tensor_sinfo->vdevice.value()->target->GetTargetDeviceType() - 1;
         ICHECK(tensor_sinfo->shape.defined())
             << "the TensorStructInfo shape of call_tir has not populated";
         if (!is_inplace) {
-          outs.push_back(
-              builder_->Emit(Call(alloc_tensor_op,  //
-                                  {Downcast<ShapeExpr>(tensor_sinfo->shape.value()),
-                                   DataTypeImm(tensor_sinfo->dtype), PrimValue::Int64(0)},  //
-                                  Attrs()),
-                             "alloc"));
+          LOG(INFO) << "call_tir_rewrite tensor_sinfo: " << tensor_sinfo
+                    << ", dev_index: " << dev_index;
+          outs.push_back(builder_->Emit(
+              Call(alloc_tensor_op,  //
+                   {Downcast<ShapeExpr>(tensor_sinfo->shape.value()),
+                    DataTypeImm(tensor_sinfo->dtype), PrimValue::Int64(dev_index)},  //
+                   Attrs()),
+              "alloc"));
         } else {
           // if there is only one output, it must be an in-place argument, but check anyway
           ICHECK(inplace_attrs->inplace_indices[0].IntValue() != -1)

@@ -80,7 +80,8 @@ class Executable:
             rt_mod = ex.jit()
             vm = tvm.relax.VirtualMachine(rt_mod, tvm.cuda())
         """
-        # TODO(tvm-team): Update runtime.Module interfac
+
+        # TODO(tvm-team): Update runtime.Module interface
         # to query these properties as bitmask.
         def _not_runnable(x):
             return x.type_key in ("c", "static_library")
@@ -195,7 +196,7 @@ def _autodetect_system_lib_req(target: tvm.target.Target, system_lib):
 
 def _vmlink(
     builder: "relax.ExecBuilder",
-    target: Union[str, tvm.target.Target],
+    target: Union[str, tvm.target.Target],  #
     tir_mod: Optional[tvm.IRModule] = None,
     ext_libs: List[tvm.runtime.Module] = None,
     params: Optional[Dict[str, list]] = None,
@@ -232,22 +233,41 @@ def _vmlink(
         An executable that can be loaded by virtual machine.
     """
     if isinstance(target, str):
-        target = tvm.target.Target(target)
+        target = tvm.target.Target(target, "llvm")
     if params is None:
         params = {}
     if ext_libs is None:
         ext_libs = []
     lib = None
+
+    # target=tvm.target.Target(target_hexagon, host=target_hexagon)
+    # target=tvm.target.Target(device, "llvm"),
+    # rt_mod = tvm.build({"llvm": m1, "cuda": m2}) # todo (yongwww)
+    # """
+    target = tvm.target.Target("cuda", "llvm")
+    mod_1 = IRModule({})
+    mod_2 = IRModule({})
+    mod_1 = mod_1.with_attrs(tir_mod.attrs)
+    mod_2 = mod_2.with_attrs(tir_mod.attrs)
+
+    gvars = tir_mod.get_global_vars()
+    mod_1[gvars[0]] = tir_mod[gvars[0]]
+    mod_2[gvars[1]] = tir_mod[gvars[1]]
+
+    tir_mod = {"llvm": mod_2, "cuda": mod_1}
     if tir_mod is not None:
+        # TODO(yongwww): update tvm.build
         lib = tvm.build(
-            tir_mod, target=target, runtime=_autodetect_system_lib_req(target, system_lib)
+            tir_mod,
+            target=target,
+            runtime=_autodetect_system_lib_req(target, system_lib),
         )
     return Executable(_ffi_api.VMLink(builder, target, lib, ext_libs, params))  # type: ignore
 
 
 def build(
     mod: tvm.IRModule,
-    target: Union[str, tvm.target.Target],
+    target: Optional[Union[str, tvm.target.Target]],  # list option
     params: Optional[Dict[str, list]] = None,
     exec_mode: str = "bytecode",
     *,
@@ -308,6 +328,8 @@ def build(
     passes.append(relax.transform.RewriteDataflowReshape())
     passes.append(relax.transform.ToNonDataflow())
     passes.append(relax.transform.RemovePurityChecking())
+    # TODO (yongwww): consider adding targets as optional arguments
+    # passes.append(relax.transform.CallTIRRewrite(target))
     passes.append(relax.transform.CallTIRRewrite())
     passes.append(relax.transform.StaticPlanBlockMemory())
 
@@ -335,6 +357,10 @@ def build(
     builder = relax.ExecBuilder()
     leftover_mod = _vmcodegen(builder, new_mod, exec_mode=exec_mode)
     tir_mod = _filter_tir(leftover_mod)
+    # TODO(@yongwww): Add logic to group tir via target, will generate a dict like {"llvm":mod1,"cuda": mod2}
+    print("yongwwww 345")
+    # tir primfunc attr: target
+    tir_mod.show()
     return _vmlink(builder, target, tir_mod, ext_libs, params, system_lib=system_lib)
 
 

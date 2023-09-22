@@ -128,6 +128,7 @@ void CompilationConfigNode::Init(const transform::PassContext& pass_ctx,
                                  const Array<Target>& raw_targets) {
   VLOG_CONTEXT << "CompilationConfig";
   CHECK_GT(raw_targets.size(), 0U) << "Require at least one target";
+  // todo (yongwww)
 
   //
   // Decide on the host target.

@@ -276,7 +276,7 @@ def _build_module_no_factory(mod, target=None, target_host=None, params=None, mo
 
 def build(
     ir_mod,
-    target=None,
+    target=None,  # todo
     target_host=None,
     executor=Executor("graph"),
     runtime=Runtime("cpp"),
