@@ -26,6 +26,7 @@
 #include <tvm/relax/analysis.h>
 #include <tvm/relax/expr_functor.h>
 #include <tvm/relax/op_attr_types.h>
+#include <tvm/relax/struct_info.h>
 #include <tvm/relax/transform.h>
 
 namespace tvm {
@@ -69,6 +70,14 @@ class LegalizeMutator : public ExprMutator {
         builder_->UpdateFunction(gv, Downcast<BaseFunc>(updated_func));
       }
     }
+    // Fill the "kTarget" attribute of PrimFunc
+    for (const auto& [gv, func] : builder_->GetContextIRModule()->functions) {
+      const tir::PrimFuncNode* prim_func;
+      if (tmap_.count(gv) && (prim_func = func.as<tir::PrimFuncNode>())) {
+        auto f = WithAttr(GetRef<tir::PrimFunc>(prim_func), tvm::attr::kTarget, tmap_[gv]);
+        builder_->UpdateFunction(gv, f);
+      }
+    }
     return builder_->GetContextIRModule();
   }
 
@@ -104,6 +113,22 @@ class LegalizeMutator : public ExprMutator {
       ret_args.push_back(arg);
     }
     return Call(call_pure_packed_op, ret_args, ret->attrs, ret->sinfo_args);
+  }
+
+  Target GetTarget(const Array<StructInfo>& sinfos) {
+    for (auto sinfo : sinfos) {
+      if (const auto* tinfo = sinfo.as<TensorStructInfoNode>()) {
+        if (tinfo->vdevice.defined()) {
+          auto vdevice = tinfo->vdevice.value();
+          if (vdevice->target.defined()) {
+            return vdevice->target;
+          }
+        }
+      } else if (const auto* tup_sinfo = sinfo.as<TupleStructInfoNode>()) {
+        return GetTarget(tup_sinfo->fields);
+      }
+    }
+    return Target();
   }
 
   Expr VisitExpr_(const CallNode* call) final {
@@ -144,6 +169,13 @@ class LegalizeMutator : public ExprMutator {
     // Check if it has default legalization registered.
     if (legalize_map.count(op)) {
       auto ret = legalize_map[op](this->builder_, visited_call);
+      auto ret_call = Downcast<Call>(ret);
+      auto target = GetTarget(ret_call->sinfo_args);
+      const GlobalVarNode* gvar_node;
+      if (target.defined() && (gvar_node = ret_call->args[0].as<GlobalVarNode>())) {
+        tmap_.Set(GetRef<GlobalVar>(gvar_node), target);
+      }
+
       if (WrapPureCondition(op, ret)) {
         return WrapPureCall(Downcast<Call>(ret));
       }
@@ -162,6 +194,8 @@ class LegalizeMutator : public ExprMutator {
   IRModule mod_;
   /*! \brief The customized legalization function map. */
   Optional<Map<String, PackedFunc>> cmap_;
+  /*! \brief The map from GlobalVar of PrimFunc to compilation Target. */
+  Map<GlobalVar, Target> tmap_;
   /*!
    * \brief A boolean value indicating if to print warnings for CallNode whose op's
    * legalization function is not registered.

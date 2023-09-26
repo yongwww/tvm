@@ -414,9 +414,6 @@ void VirtualMachineImpl::LoadExecutable(ObjectPtr<Executable> exec) {
 
 void VirtualMachineImpl::Init(const std::vector<Device>& devices,
                               const std::vector<AllocatorType>& alloc_types) {
-  // TODO(@yuchen): support multi-device heterogeneous execution
-  ICHECK_LT(devices.size(), 3)
-      << "Currently relax vm only supports at most 2 devices (host + device)";
   ICHECK_EQ(devices.size(), alloc_types.size());
 
   this->devices.reserve(devices.size());
@@ -432,7 +429,7 @@ void VirtualMachineImpl::Init(const std::vector<Device>& devices,
     if (constant.type_code() != kTVMNDArrayHandle) {
       this->const_pool_.push_back(constant);
     } else {
-      this->const_pool_.push_back(ConvertRegToDevice(constant, devices[0], allocators[0]));
+      this->const_pool_.push_back(ConvertRegToDevice(constant, devices[1], allocators[0]));
     }
   }
   // Setup function sections.
@@ -597,7 +594,8 @@ void VirtualMachineImpl::SetInput(std::string func_name, TVMArgs args, int offse
         // call param func to get the arguments(usually corresponds to param pack.)
         func_args[index] = (args[i].operator Module()).GetFunction("get_params")();
       } else {
-        func_args[index] = ConvertArgToDevice(args[i], devices[0], allocators[0]);
+        func_args[index] =
+            ConvertArgToDevice(args[i], devices[0], allocators[0]);  // todo (yongwww): why dev[0]?
       }
     }
     inputs_[func_name] = func_args;
@@ -795,6 +793,7 @@ void VirtualMachineImpl::InitFuncPool() {
 
 void VirtualMachineImpl::RunInstrCall(VMFrame* curr_frame, Instruction instr) {
   DLOG(INFO) << "\n  pc = " << pc_ << ", execute: " << GetFuncName(instr.func_idx);
+  LOG(INFO) << "RunInstrCall pc = " << pc_ << ", execute: " << GetFuncName(instr.func_idx);
   int args_begin_offset = instrument_ != nullptr ? 4 : 0;
   // Use the call arg stack from the current frame to increase reuse
   // and avoid re-allocation
