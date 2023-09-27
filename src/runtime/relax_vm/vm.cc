@@ -90,7 +90,11 @@ NDArray ConvertNDArrayToDevice(NDArray src, const DLDevice& dev, Allocator* allo
   if (src->device.device_type == dev.device_type && src->device.device_id == dev.device_id) {
     return src;
   } else {
-    auto res = alloc->Empty(src.Shape(), src->dtype, dev);
+    std::vector<int64_t> shape;
+    for (auto s : src.Shape()) {
+      shape.push_back(s);
+    }
+    auto res = alloc->Empty(shape, src->dtype, dev, NullOpt);
     res.CopyFrom(src);
     return res;
   }
@@ -122,7 +126,7 @@ TVMRetValue ConvertArgToDevice(TVMArgValue input, Device dev, Allocator* alloc) 
   if (input.type_code() == kTVMDLTensorHandle) {
     DLTensor* tensor = input;
     std::vector<int64_t> shape(tensor->shape, tensor->shape + tensor->ndim);
-    auto dst = alloc->Empty(shape, tensor->dtype, dev);
+    auto dst = alloc->Empty(shape, tensor->dtype, dev, NullOpt);
     dst.CopyFrom(tensor);
     ret = dst;
   } else if (input.IsObjectRef<ObjectRef>()) {

@@ -35,7 +35,7 @@ namespace runtime {
 static void BufferDeleter(Object* obj) {
   auto* ptr = static_cast<NDArray::Container*>(obj);
   ICHECK(ptr->manager_ctx != nullptr);
-  MBuffer* buffer = reinterpret_cast<MBuffer*>(ptr->manager_ctx);
+  Buffer* buffer = reinterpret_cast<Buffer*>(ptr->manager_ctx);
   MemoryManager::GetAllocator(buffer->device)->Free(*(buffer));
   delete buffer;
   delete ptr;
@@ -55,6 +55,12 @@ void StorageObj::Deleter(Object* obj) {
   StorageObj* storage = reinterpret_cast<StorageObj*>(ptr->manager_ctx);
   storage->DecRef();
   delete ptr;
+}
+
+Storage::Storage(Buffer buffer) {
+  auto n = make_object<StorageObj>();
+  n->buffer = std::move(buffer);
+  data_ = std::move(n);
 }
 
 inline void VerifyDataType(DLDataType dtype) {
@@ -93,6 +99,40 @@ NDArray StorageObj::AllocNDArray(size_t offset, std::vector<int64_t> shape, DLDa
   // reference count, then destroy the container, but leave the underlying
   // buffer intact.
   container->manager_ctx = reinterpret_cast<void*>(this);
+
+  NDArray ret(GetObjectPtr<Object>(container));
+  // RAII in effect, now run the check.
+
+  ICHECK(offset + needed_size <= this->buffer.size)
+      << "storage allocation failure, attempted to allocate " << needed_size << " at offset "
+      << offset << " in region that is " << this->buffer.size << "bytes";
+
+  return ret;
+}
+
+NDArray StorageObj::AllocTensor(uint64_t offset, ShapeTuple shape, DLDataType dtype) {
+  VerifyDataType(dtype);
+
+  // critical zone: allocate header, cannot throw
+  NDArray::Container* container =
+      new NDArray::Container(nullptr, shape, dtype, this->buffer.device);
+
+  container->SetDeleter(StorageObj::Deleter);
+  size_t needed_size = GetDataSize(container->dl_tensor);
+  this->IncRef();
+  // The manager context pointer must continue to point to the storage object
+  // which owns the backing memory, and keeps track of the reference count.
+  //
+  // When we free a container we extract the storage object, decrement its
+  // reference count, then destroy the container, but leave the underlying
+  // buffer intact.
+  container->manager_ctx = reinterpret_cast<void*>(this);
+
+  // is this UB?
+  // The only change we make w.r.t offset is modifying the data pointer
+  // of the backing tensor to point into the buffer instead of its start.
+  auto offset_ptr = reinterpret_cast<uint8_t*>(this->buffer.data) + offset;
+  container->dl_tensor.data = reinterpret_cast<void*>(offset_ptr);
 
   NDArray ret(GetObjectPtr<Object>(container));
   // RAII in effect, now run the check.
@@ -160,7 +200,7 @@ NDArray Allocator::Empty(std::vector<int64_t> shape, DLDataType dtype, DLDevice 
   container->SetDeleter(BufferDeleter);
   size_t size = GetDataSize(container->dl_tensor);
   size_t alignment = GetDataAlignment(container->dl_tensor);
-  MBuffer* buffer = new MBuffer;
+  Buffer* buffer = new Buffer;
   if (!mem_scope.defined() || mem_scope == "global") {
     *buffer = this->Alloc(size, alignment, dtype);
   } else {
@@ -171,8 +211,8 @@ NDArray Allocator::Empty(std::vector<int64_t> shape, DLDataType dtype, DLDevice 
   return NDArray(GetObjectPtr<Object>(container));
 }
 
-MBuffer Allocator::Alloc(Device dev, int ndims, int64_t* shape, DLDataType type_hint,
-                         const std::string& mem_scope) {
+Buffer Allocator::Alloc(Device dev, int ndims, int64_t* shape, DLDataType type_hint,
+                        const std::string& mem_scope) {
   if (mem_scope.empty() || mem_scope == "global") {
     // by default, we can always redirect to the flat memory allocations
     std::vector<int64_t> s;
@@ -187,6 +227,25 @@ MBuffer Allocator::Alloc(Device dev, int ndims, int64_t* shape, DLDataType type_
   LOG(FATAL) << "Allocator cannot allocate data space with "
              << "specified memory scope: " << mem_scope;
   return {};
+}
+
+Buffer Allocator::Alloc(ShapeTuple shape, DLDataType dtype, String mem_scope) {
+  ICHECK_EQ(shape.size(), 1) << "Allocator of type (" << type_
+                             << ") does not support nD allocation. Please use allocator type ("
+                             << AllocatorType::kNaive << ")";
+  CHECK_EQ(mem_scope, "global") << "Allocator of type (" << type_
+                                << ") does not support memory scope " << mem_scope
+                                << ". Please use allocator type (" << AllocatorType::kNaive << ")";
+
+  DLTensor temp;
+  temp.ndim = shape.size();
+  temp.dtype = dtype;
+  temp.shape = const_cast<int64_t*>(shape.data());
+  temp.strides = nullptr;
+  temp.byte_offset = 0;
+  size_t nbytes = GetDataSize(temp);
+
+  return Alloc(nbytes, runtime::kAllocAlignment, dtype);
 }
 
 }  // namespace runtime

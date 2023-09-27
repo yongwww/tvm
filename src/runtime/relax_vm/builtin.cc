@@ -24,12 +24,12 @@
 #include <tvm/runtime/device_api.h>
 #include <tvm/runtime/logging.h>
 #include <tvm/runtime/memory.h>
+#include <tvm/runtime/memory_manager.h>
 #include <tvm/runtime/ndarray.h>
 #include <tvm/runtime/packed_func.h>
 #include <tvm/runtime/registry.h>
 #include <tvm/runtime/relax_vm/builtin.h>
 #include <tvm/runtime/relax_vm/bytecode.h>
-#include <tvm/runtime/relax_vm/memory_manager.h>
 #include <tvm/runtime/relax_vm/vm.h>
 
 #include "../runtime_base.h"
@@ -61,7 +61,7 @@ NDArray AllocShapeHeap(void* ctx_ptr, int64_t size) {
     ICHECK_EQ(vm->devices[host_device_index].device_type, kDLCPU);
   }
   auto* alloc = vm->allocators[host_device_index];
-  return alloc->Empty({size}, DLDataType{kDLInt, 64, 1}, vm->devices[host_device_index]);
+  return alloc->Empty({size}, DLDataType{kDLInt, 64, 1}, vm->devices[host_device_index], NullOpt);
 }
 
 TVM_REGISTER_GLOBAL("vm.builtin.alloc_shape_heap").set_body_typed(AllocShapeHeap);
@@ -259,6 +259,7 @@ Storage VMAllocStorage(void* ctx_ptr, ShapeTuple buffer_shape, Index device_inde
   auto* alloc = vm->allocators[device_index];
   ICHECK(alloc) << "Did you forget to init the VirtualMachine with devices?";
 
+  std::vector<int64_t> shape;
   storage_obj->buffer = alloc->Alloc(buffer_shape, dtype_hint, mem_scope);
   Storage storage(storage_obj);
   return storage;
@@ -266,7 +267,7 @@ Storage VMAllocStorage(void* ctx_ptr, ShapeTuple buffer_shape, Index device_inde
 
 TVM_REGISTER_GLOBAL("vm.builtin.alloc_storage").set_body_typed(VMAllocStorage);
 
-TVM_REGISTER_GLOBAL("vm.builtin.alloc_tensor").set_body_method<Storage>(&StorageObj::AllocNDArray);
+TVM_REGISTER_GLOBAL("vm.builtin.alloc_tensor").set_body_method<Storage>(&StorageObj::AllocTensor);
 
 //-------------------------------------------------
 //  Closure function handling, calling convention

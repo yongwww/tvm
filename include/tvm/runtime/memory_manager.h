@@ -38,7 +38,7 @@
 namespace tvm {
 namespace runtime {
 
-struct MBuffer {
+struct Buffer {
   /*! \brief The pointer to the allocated block of memory. */
   void* data{nullptr};
   /*! \brief The size of the block. */
@@ -75,7 +75,7 @@ class Allocator {
    *  \param type_hint A type hint to the allocator.
    *  \return A sized allocation in the form of a buffer.
    */
-  virtual MBuffer Alloc(size_t nbytes, size_t alignment, DLDataType type_hint) = 0;
+  virtual Buffer Alloc(size_t nbytes, size_t alignment, DLDataType type_hint) = 0;
   /*! \brief Allocate a buffer given a shape and type.
    *  \param ndims The rank of the tensor.
    *  \param shape The shape of the tensor.
@@ -83,20 +83,21 @@ class Allocator {
    *  \param mem_scope A memory scope of the buffer.
    *  \return A sized allocation in the form of a buffer.
    */
-  virtual MBuffer Alloc(int ndims, int64_t* shape, DLDataType type_hint,
-                        const std::string& mem_scope = "") = 0;
+  virtual Buffer Alloc(ShapeTuple shape, DLDataType dtype, String mem_scope) = 0;  // TODO (yongwww)
+  virtual Buffer Alloc(int ndims, int64_t* shape, DLDataType type_hint,
+                       const std::string& mem_scope = "") = 0;
   /*! \brief Free a buffer allocated by the allocator.
    *  \param buffer The buffer to free.
    */
-  virtual void Free(const MBuffer& buffer) = 0;
+  virtual void Free(const Buffer& buffer) = 0;
   /*! \brief The amount of memory currently allocated.
    *  \return The amount of memory currently allocated.
    */
   virtual size_t UsedMemory() const = 0;
 
  protected:
-  virtual MBuffer Alloc(Device dev, int ndims, int64_t* shape, DLDataType type_hint,
-                        const std::string& mem_scope);
+  virtual Buffer Alloc(Device dev, int ndims, int64_t* shape, DLDataType type_hint,
+                       const std::string& mem_scope);
 
  private:
   AllocatorType type_;
@@ -131,10 +132,13 @@ class MemoryManager {
 class StorageObj : public Object {
  public:
   /*! \brief The index into the VM function table. */
-  MBuffer buffer;
+  Buffer buffer;
 
   /*! \brief Allocate an NDArray from a given piece of storage. */
   NDArray AllocNDArray(size_t offset, std::vector<int64_t> shape, DLDataType dtype);
+
+  NDArray AllocTensor(uint64_t offset, ShapeTuple shape,
+                      DLDataType dtype);  // TODO (yongwww)
 
   /*! \brief The deleter for an NDArray when allocated from underlying storage. */
   static void Deleter(Object* ptr);
@@ -152,7 +156,7 @@ class StorageObj : public Object {
 /*! \brief reference to storage. */
 class Storage : public ObjectRef {
  public:
-  explicit Storage(MBuffer buffer);
+  explicit Storage(Buffer buffer);
 
   TVM_DEFINE_MUTABLE_OBJECT_REF_METHODS(Storage, ObjectRef, StorageObj);
 };

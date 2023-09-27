@@ -36,8 +36,8 @@ class NaiveAllocator final : public Allocator {
  public:
   explicit NaiveAllocator(Device dev) : Allocator(kNaive), used_memory_(0), device_(dev) {}
 
-  MBuffer Alloc(size_t nbytes, size_t alignment, DLDataType type_hint) override {
-    MBuffer buf;
+  Buffer Alloc(size_t nbytes, size_t alignment, DLDataType type_hint) override {
+    Buffer buf;
     buf.device = device_;
     buf.size = nbytes;
     buf.data = DeviceAPI::Get(device_)->AllocDataSpace(device_, nbytes, alignment, type_hint);
@@ -46,9 +46,30 @@ class NaiveAllocator final : public Allocator {
     return buf;
   }
 
-  MBuffer Alloc(int ndims, int64_t* shape, DLDataType type_hint,
-                const std::string& mem_scope) override {
-    MBuffer buf;
+  Buffer Alloc(ShapeTuple shape, DLDataType dtype, String mem_scope) override {
+    DLTensor temp;
+    temp.data = nullptr;
+    temp.device = device_;
+    temp.ndim = shape.size();
+    temp.dtype = dtype;
+    temp.shape = const_cast<int64_t*>(shape.data());
+    temp.strides = nullptr;
+    temp.byte_offset = 0;
+    size_t nbytes = GetDataSize(temp);
+
+    Buffer buf;
+    buf.device = device_;
+    buf.size = nbytes;
+    buf.data = runtime::DeviceAPI::Get(device_)->AllocDataSpace(device_, shape.size(), shape.data(),
+                                                                dtype, mem_scope);
+    used_memory_.fetch_add(nbytes, std::memory_order_relaxed);
+    DLOG(INFO) << "allocate " << nbytes << " B, used memory " << used_memory_ << " B";
+    return buf;
+  }
+
+  Buffer Alloc(int ndims, int64_t* shape, DLDataType type_hint,
+               const std::string& mem_scope) override {
+    Buffer buf;
     size_t nbytes = 1;
     for (int i = 0; i < ndims; ++i) {
       buf.shape.push_back(shape[i]);
@@ -71,7 +92,7 @@ class NaiveAllocator final : public Allocator {
     return buf;
   }
 
-  void Free(const MBuffer& buffer) override {
+  void Free(const Buffer& buffer) override {
     DeviceAPI::Get(device_)->FreeDataSpace(buffer.device, buffer.data);
     used_memory_.fetch_sub(buffer.size, std::memory_order_relaxed);
     DLOG(INFO) << "free " << buffer.size << " B, used memory " << used_memory_ << " B";

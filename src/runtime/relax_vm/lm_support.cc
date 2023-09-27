@@ -39,8 +39,8 @@
 #include <tvm/runtime/device_api.h>
 #include <tvm/runtime/logging.h>
 #include <tvm/runtime/memory.h>
+#include <tvm/runtime/memory_manager.h>
 #include <tvm/runtime/ndarray.h>
-#include <tvm/runtime/relax_vm/memory_manager.h>
 #include <tvm/runtime/relax_vm/vm.h>
 
 #include <cmath>
@@ -188,17 +188,19 @@ Array<AttentionKVCache> CreateMultipleKVCaches(NDArray init_data, ShapeTuple res
 
   // Add padding to make each cache align to kAllocAlignment
   using tvm::runtime::kAllocAlignment;
+  using tvm::runtime::MemoryManager;
+  using tvm::runtime::Storage;
   int64_t padding = (kAllocAlignment - cache_size % kAllocAlignment) % kAllocAlignment;
   int64_t cache_offset = cache_size + padding;
 
   Storage storage =
-      Storage(MemoryManager::GetOrCreateAllocator(init_data->device, AllocatorType::kNaive)
+      Storage(MemoryManager::GetOrCreateAllocator(init_data->device, runtime::AllocatorType::kNaive)
                   ->Alloc(cache_offset * num_caches, kAllocAlignment, dtype));
 
   Array<AttentionKVCache> result;
   for (int i = 0; i < num_caches; ++i) {
     auto c = make_object<AttentionKVCacheObj>();
-    c->data = storage->AllocNDArray(i * cache_offset, reserve_shape, dtype);
+    c->data = storage->AllocTensor(i * cache_offset, reserve_shape, dtype);
     c->fill_count = 0;
     if (init_fill_count > 0) {
       c->Append(init_data);

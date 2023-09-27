@@ -31,9 +31,9 @@
 #include <string>
 #include <vector>
 
+#include "../memory_manager.h"
 #include "./bytecode.h"
 #include "./executable.h"
-#include "./memory_manager.h"
 
 namespace tvm {
 namespace runtime {
