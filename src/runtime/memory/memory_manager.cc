@@ -21,7 +21,10 @@
  * \file tvm/runtime/memory/memory_manager.cc
  * \brief Allocate and manage memory for the runtime.
  */
+#include <tvm/runtime/device_api.h>
+#include <tvm/runtime/memory.h>
 #include <tvm/runtime/memory/memory_manager.h>
+#include <tvm/runtime/registry.h>
 
 #include <memory>
 #include <utility>
@@ -34,7 +37,7 @@ namespace runtime {
 namespace memory {
 
 static void BufferDeleter(Object* obj) {
-  auto* ptr = static_cast<NDArray::Container*>(obj);
+  auto* ptr = static_cast<runtime::NDArray::Container*>(obj);
   ICHECK(ptr->manager_ctx != nullptr);
   Buffer* buffer = reinterpret_cast<Buffer*>(ptr->manager_ctx);
   MemoryManager::GetAllocator(buffer->device, buffer->alloc_type)->Free(*(buffer));
@@ -42,14 +45,8 @@ static void BufferDeleter(Object* obj) {
   delete ptr;
 }
 
-Storage::Storage(Buffer buffer) {
-  auto n = make_object<StorageObj>();
-  n->buffer = std::move(buffer);
-  data_ = std::move(n);
-}
-
 void StorageObj::Deleter(Object* obj) {
-  auto* ptr = static_cast<NDArray::Container*>(obj);
+  auto* ptr = static_cast<runtime::NDArray::Container*>(obj);
   // When invoking AllocNDArray we don't own the underlying allocation
   // and should not delete the buffer, but instead let it be reclaimed
   // by the storage object's destructor.
@@ -62,6 +59,12 @@ void StorageObj::Deleter(Object* obj) {
   StorageObj* storage = reinterpret_cast<StorageObj*>(ptr->manager_ctx);
   storage->DecRef();
   delete ptr;
+}
+
+Storage::Storage(Buffer buffer) {
+  auto n = make_object<StorageObj>();
+  n->buffer = std::move(buffer);
+  data_ = std::move(n);
 }
 
 inline void VerifyDataType(DLDataType dtype) {
@@ -78,20 +81,21 @@ inline void VerifyDataType(DLDataType dtype) {
 
 inline size_t GetDataAlignment(const DLTensor& arr) {
   size_t align = (arr.dtype.bits / 8) * arr.dtype.lanes;
-  if (align < kAllocAlignment) return kAllocAlignment;
+  if (align < runtime::kAllocAlignment) return runtime::kAllocAlignment;
   return align;
 }
 
-NDArray StorageObj::AllocNDArray(size_t offset, ShapeTuple shape, DLDataType dtype) {
+runtime::NDArray StorageObj::AllocNDArray(uint64_t offset, ShapeTuple shape, DLDataType dtype) {
   VerifyDataType(dtype);
 
-  // crtical zone: allocate header, cannot throw
-  NDArray::Container* container =
-      new NDArray::Container(this->buffer.data, shape, dtype, this->buffer.device);
-  container->dl_tensor.byte_offset = offset;
+  // critical zone: allocate header, cannot throw
+  runtime::NDArray::Container* container =
+      new runtime::NDArray::Container(nullptr, shape, dtype, this->buffer.device);
+  // container->dl_tensor.byte_offset = offset;
 
   container->SetDeleter(StorageObj::Deleter);
-  size_t needed_size = DeviceAPI::Get(this->buffer.device)->GetDataSize(container->dl_tensor);
+  size_t needed_size = runtime::GetDataSize(container->dl_tensor);
+  // size_t needed_size = DeviceAPI::Get(this->buffer.device)->GetDataSize(container->dl_tensor);
   this->IncRef();
   // The manager context pointer must continue to point to the storage object
   // which owns the backing memory, and keeps track of the reference count.
@@ -101,7 +105,13 @@ NDArray StorageObj::AllocNDArray(size_t offset, ShapeTuple shape, DLDataType dty
   // buffer intact.
   container->manager_ctx = reinterpret_cast<void*>(this);
 
-  NDArray ret(GetObjectPtr<Object>(container));
+  // is this UB?
+  // The only change we make w.r.t offset is modifying the data pointer
+  // of the backing tensor to point into the buffer instead of its start.
+  auto offset_ptr = reinterpret_cast<uint8_t*>(this->buffer.data) + offset;
+  container->dl_tensor.data = reinterpret_cast<void*>(offset_ptr);
+
+  runtime::NDArray ret(runtime::GetObjectPtr<Object>(container));
   // RAII in effect, now run the check.
 
   ICHECK(offset + needed_size <= this->buffer.size)
@@ -122,18 +132,15 @@ Allocator* MemoryManager::GetOrCreateAllocator(Device dev, AllocatorType type) {
   MemoryManager* m = MemoryManager::Global();
   std::lock_guard<std::mutex> lock(m->mu_);
   if (m->allocators_.find(dev) == m->allocators_.end()) {
-    m->allocators_.emplace(dev, std::unordered_map<AllocatorType, std::unique_ptr<Allocator>>());
-  }
-  if (m->allocators_.at(dev).find(type) == m->allocators_.at(dev).end()) {
     std::unique_ptr<Allocator> alloc;
     switch (type) {
       case kNaive: {
-        VLOG(1) << "New naive allocator for " << dev;
+        DLOG(INFO) << "New naive allocator for " << dev;
         alloc.reset(new NaiveAllocator(dev));
         break;
       }
       case kPooled: {
-        VLOG(1) << "New pooled allocator for " << dev;
+        DLOG(INFO) << "New pooled allocator for " << dev;
         alloc.reset(new PooledAllocator(dev));
         break;
       }
@@ -141,15 +148,15 @@ Allocator* MemoryManager::GetOrCreateAllocator(Device dev, AllocatorType type) {
         LOG(FATAL) << "Unknown allocator type: " << type;
     }
     auto ret = alloc.get();
-    m->allocators_.at(dev).emplace(type, std::move(alloc));
+    m->allocators_.emplace(dev, std::move(alloc));
     return ret;
   }
-  auto alloc = m->allocators_.at(dev).at(type).get();
-  /*if (alloc->type() != type) {
+  auto alloc = m->allocators_.at(dev).get();
+  if (alloc->type() != type) {
     LOG(WARNING) << "The type of existing allocator for " << dev
                  << " is different from the request type (" << alloc->type() << " vs " << type
                  << ")";
-  }*/
+  }
   return alloc;
 }
 
@@ -160,30 +167,52 @@ Allocator* MemoryManager::GetAllocator(Device dev, AllocatorType type) {
   if (it == m->allocators_.end()) {
     LOG(FATAL) << "Allocator for " << dev << " has not been created yet.";
   }
-  if (it->second.find(type) == it->second.end()) {
-    LOG(FATAL) << "Allocator for " << dev << " of type " << type << " has not been created yet.";
-  }
-  return it->second.at(type).get();
+  return it->second.get();
 }
 
-NDArray Allocator::Empty(ShapeTuple shape, DLDataType dtype, DLDevice dev,
-                         Optional<String> mem_scope) {
+void MemoryManager::Clear() {
+  MemoryManager* m = MemoryManager::Global();
+  std::lock_guard<std::mutex> lock(m->mu_);
+  m->allocators_.clear();
+}
+
+Buffer Allocator::Alloc(ShapeTuple shape, DLDataType dtype, String mem_scope) {
+  ICHECK_EQ(shape.size(), 1) << "Allocator of type (" << type_
+                             << ") does not support nD allocation. Please use allocator type ("
+                             << AllocatorType::kNaive << ")";
+  CHECK_EQ(mem_scope, "global") << "Allocator of type (" << type_
+                                << ") does not support memory scope " << mem_scope
+                                << ". Please use allocator type (" << AllocatorType::kNaive << ")";
+
+  DLTensor temp;
+  temp.ndim = shape.size();
+  temp.dtype = dtype;
+  temp.shape = const_cast<int64_t*>(shape.data());
+  temp.strides = nullptr;
+  temp.byte_offset = 0;
+  size_t nbytes = GetDataSize(temp);
+
+  return Alloc(nbytes, runtime::kAllocAlignment, dtype);
+}
+
+runtime::NDArray Allocator::Empty(ShapeTuple shape, DLDataType dtype, DLDevice dev,
+                                  Optional<String> mem_scope) {
   VerifyDataType(dtype);
-  NDArray::Container* container = new NDArray::Container(nullptr, shape, dtype, dev);
+  runtime::NDArray::Container* container =
+      new runtime::NDArray::Container(nullptr, shape, dtype, dev);
   container->SetDeleter(BufferDeleter);
-  size_t size = DeviceAPI::Get(dev)->GetDataSize(container->dl_tensor);
+  size_t size = runtime::GetDataSize(container->dl_tensor);
   size_t alignment = GetDataAlignment(container->dl_tensor);
   Buffer* buffer = new Buffer;
-  if (!mem_scope.defined() || mem_scope.value().empty() || mem_scope.value() == "global") {
-    *buffer = this->Alloc(size, alignment, dtype);
-  } else {
-    *buffer = this->Alloc(shape, dtype, mem_scope.value());
-  }
+  *buffer = this->Alloc(size, alignment, dtype);
   container->manager_ctx = reinterpret_cast<void*>(buffer);
   container->dl_tensor.data = buffer->data;
-  return NDArray(GetObjectPtr<Object>(container));
+  return runtime::NDArray(runtime::GetObjectPtr<Object>(container));
 }
 
+TVM_REGISTER_GLOBAL("vm.builtin.memory_manager.clear").set_body_typed(MemoryManager::Clear);
+
+/*
 Buffer Allocator::Alloc(Device dev, ShapeTuple shape, DLDataType type_hint,
                         const std::string& mem_scope) {
   if (mem_scope.empty() || mem_scope == "global") {
@@ -197,6 +226,7 @@ Buffer Allocator::Alloc(Device dev, ShapeTuple shape, DLDataType type_hint,
              << "specified memory scope: " << mem_scope;
   return {};
 }
+*/
 
 }  // namespace memory
 }  // namespace runtime

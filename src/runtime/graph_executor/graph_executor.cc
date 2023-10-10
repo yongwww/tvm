@@ -467,7 +467,7 @@ void GraphExecutor::SetupStorage() {
         mem_scope = String(pit.scope);
       }
       storage_pool_.push_back(MemoryManager::GetOrCreateAllocator(dev, AllocatorType::kNaive)
-                                  ->Empty(shape, pit.dtype, dev, mem_scope));
+                                  ->Empty(shape, pit.dtype, dev));
     }
   }
 

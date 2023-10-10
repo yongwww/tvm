@@ -26,12 +26,10 @@
 
 #include <tvm/runtime/c_runtime_api.h>
 #include <tvm/runtime/ndarray.h>
-#include <tvm/runtime/object.h>
 
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -83,8 +81,7 @@ class Allocator {
    *  \param mem_scope A memory scope of the buffer.
    *  \return A sized allocation in the form of a buffer.
    */
-  virtual Buffer Alloc(ShapeTuple shape, DLDataType type_hint,
-                       const std::string& mem_scope = "") = 0;
+  virtual Buffer Alloc(ShapeTuple shape, DLDataType type_hint, String mem_scope = "");
   /*! \brief Free a buffer allocated by the allocator.
    *  \param buffer The buffer to free.
    */
@@ -92,11 +89,11 @@ class Allocator {
   /*! \brief The amount of memory currently allocated.
    *  \return The amount of memory currently allocated.
    */
-  virtual size_t UsedMemory() const = 0;
+  // virtual size_t UsedMemory() const = 0;
 
- protected:
-  virtual Buffer Alloc(Device dev, ShapeTuple shape, DLDataType type_hint,
-                       const std::string& mem_scope);
+  // protected:  // todo(yongwww): remove
+  //  virtual Buffer Alloc(Device dev, ShapeTuple shape, DLDataType type_hint,
+  //                       const std::string& mem_scope);
 
  private:
   AllocatorType type_;
@@ -120,13 +117,18 @@ class MemoryManager {
    */
   static Allocator* GetAllocator(Device dev, AllocatorType type);
 
+  /*! \brief Clear the allocators. */
+  static void Clear();
+
  private:
   MemoryManager() {}
 
- protected:
+ private:
   std::mutex mu_;
-  std::unordered_map<Device, std::unordered_map<AllocatorType, std::unique_ptr<Allocator>>>
-      allocators_;
+  // todo (yongwww): -> std::unordered_map<Device, std::unique_ptr<Allocator>> allocators_;
+  std::unordered_map<Device, std::unique_ptr<Allocator>> allocators_;
+  // std::unordered_map<Device, std::unordered_map<AllocatorType, std::unique_ptr<Allocator>>>
+  //     allocators_;
 };
 
 /*! \brief An object representing a storage allocation. */
@@ -136,7 +138,7 @@ class StorageObj : public Object {
   Buffer buffer;
 
   /*! \brief Allocate an NDArray from a given piece of storage. */
-  NDArray AllocNDArray(size_t offset, ShapeTuple shape, DLDataType dtype);
+  runtime::NDArray AllocNDArray(uint64_t offset, ShapeTuple shape, DLDataType dtype);
 
   /*! \brief The deleter for an NDArray when allocated from underlying storage. */
   static void Deleter(Object* ptr);
@@ -146,8 +148,8 @@ class StorageObj : public Object {
     alloc->Free(buffer);
   }
 
-  static constexpr const uint32_t _type_index = TypeIndex::kDynamic;
-  static constexpr const char* _type_key = "vm.Storage";
+  static constexpr const uint32_t _type_index = runtime::TypeIndex::kDynamic;
+  static constexpr const char* _type_key = "relax.Storage";  // yongwww
   TVM_DECLARE_FINAL_OBJECT_INFO(StorageObj, Object);
 };
 
