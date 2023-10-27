@@ -16,7 +16,7 @@
 # under the License.
 # pylint: disable=too-many-arguments,invalid-name,protected-access,unused-argument
 """Builtin Modules."""
-from typing import List, Optional, Sequence, Union
+from typing import List, Optional, Sequence, Union, Tuple
 
 import numpy as np
 
@@ -71,7 +71,9 @@ class IOEffect(Effect):
 
 @register_func("effect.print")
 def _print(_, array: NDArray) -> None:
-    print(f"effect.print: shape = {array.shape}, dtype = {array.dtype}, data =\n{array}")
+    print(
+        f"effect.print: shape = {array.shape}, dtype = {array.dtype}, data =\n{array}"
+    )
 
 
 class ReLU(Module):
@@ -264,7 +266,13 @@ class Conv1D(Module):
             The output tensor for the conv1d layer.
         """
         return op.conv1d(
-            x, self.weight, self.bias, self.stride, self.padding, self.dilation, self.groups
+            x,
+            self.weight,
+            self.bias,
+            self.stride,
+            self.padding,
+            self.dilation,
+            self.groups,
         )
 
 
@@ -323,7 +331,13 @@ class Conv2D(Module):
             The output tensor for the conv2d layer.
         """
         return op.conv2d(
-            x, self.weight, self.bias, self.stride, self.padding, self.dilation, self.groups
+            x,
+            self.weight,
+            self.bias,
+            self.stride,
+            self.padding,
+            self.dilation,
+            self.groups,
         )
 
 
@@ -383,6 +397,77 @@ class ConvTranspose1D(Module):
             The output tensor for the convtranspose1d layer.
         """
         return op.conv1d_transpose(
+            x,
+            self.weight,
+            self.bias,
+            self.stride,
+            self.padding,
+            self.output_padding,
+            self.dilation,
+            self.groups,
+        )
+
+
+class ConvTranspose2D(Module):
+    """
+    Module for ConvTranspose2D layer.
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int,
+        stride: Union[int, Tuple[int, int]] = (1, 1),
+        padding: Union[int, Tuple[int, ...]] = (0, 0),
+        output_padding: Union[int, Tuple[int, int]] = (0, 0),
+        dilation: Union[int, Tuple[int, int]] = (1, 1),
+        groups: int = 1,
+        bias: bool = True,
+        dtype: Optional[str] = None,
+    ) -> None:
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.output_padding = output_padding
+        self.dilation = dilation
+        self.groups = groups
+
+        self.weight = Parameter(
+            (
+                self.in_channels,
+                int(self.out_channels // self.groups),
+                self.kernel_size,
+                self.kernel_size,
+            ),
+            dtype,
+        )
+
+        if bias:
+            # TODO (yongwww): figure out for bias
+            self.bias = Parameter((self.out_channels,), dtype)
+        else:
+            self.bias = None
+
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Forward method for convtranspose2d layer.
+
+        Parameters
+        ----------
+        x : Tensor
+            The input tensor.
+
+        Returns
+        -------
+        ret : Tensor
+            The output tensor for the convtranspose2d layer.
+        """
+        print("debuggging x shape: ", x.shape)
+        return op.conv2d_transpose(
             x,
             self.weight,
             self.bias,
@@ -506,7 +591,9 @@ class GroupNorm(Module):
             self.weight = None
             self.bias = None
 
-    def forward(self, x: Tensor, channel_axis: int = 1, axes: Optional[List[int]] = None):
+    def forward(
+        self, x: Tensor, channel_axis: int = 1, axes: Optional[List[int]] = None
+    ):
         """
         Forward method for group norm layer.
 
@@ -554,7 +641,9 @@ class KVCache(Effect):
         self.unit_shape = [int(i) for i in unit_shape]
         self.dtype = dtype
 
-    def emit_init(self, name_hint: str, bb: rx.BlockBuilder):  # pylint: disable=arguments-renamed
+    def emit_init(
+        self, name_hint: str, bb: rx.BlockBuilder
+    ):  # pylint: disable=arguments-renamed
         """
         Emit the initialization of the KVCache effect.
 
@@ -571,7 +660,11 @@ class KVCache(Effect):
             bb.emit(
                 rx.Call(
                     rx.extern("vm.builtin.attention_kv_cache_create"),
-                    args=[rx.op.zeros(init_shape, self.dtype), init_shape, rx.PrimValue(0)],
+                    args=[
+                        rx.op.zeros(init_shape, self.dtype),
+                        init_shape,
+                        rx.PrimValue(0),
+                    ],
                     sinfo_args=[rx.ObjectStructInfo()],
                 ),
                 name_hint=name_hint,
@@ -780,7 +873,10 @@ class Timesteps(Module):
     """
 
     def __init__(
-        self, num_channels: int, flip_sin_to_cos: bool = False, downscale_freq_shift: float = 1
+        self,
+        num_channels: int,
+        flip_sin_to_cos: bool = False,
+        downscale_freq_shift: float = 1,
     ):
         self.num_channels = num_channels
         self.flip_sin_to_cos = flip_sin_to_cos
@@ -832,7 +928,9 @@ class Attention(Module):
         scale_qk: bool = True,
     ):
         self.query_dim = query_dim
-        self.cross_attention_dim = cross_attention_dim if cross_attention_dim else query_dim
+        self.cross_attention_dim = (
+            cross_attention_dim if cross_attention_dim else query_dim
+        )
         self.heads = heads
         self.dim_head = dim_head
         self.bias = bias
@@ -849,12 +947,16 @@ class Attention(Module):
 
         if self.norm_num_groups is not None:
             self.group_norm = GroupNorm(
-                num_channels=self.query_dim, num_groups=self.norm_num_groups, affine=True
+                num_channels=self.query_dim,
+                num_groups=self.norm_num_groups,
+                affine=True,
             )
         else:
             self.group_norm = None
 
-        self.to_out = ModuleList([Linear(self.inner_dim, self.query_dim, bias=self.out_bias)])
+        self.to_out = ModuleList(
+            [Linear(self.inner_dim, self.query_dim, bias=self.out_bias)]
+        )
 
     def forward(
         self,
@@ -898,7 +1000,9 @@ class Attention(Module):
         key = op.reshape(key, [0, -1, self.heads, head_dim])
         value = op.reshape(value, [0, -1, self.heads, head_dim])
 
-        hidden_states = op.scaled_dot_product_attention(query, key, value, is_causal=False)
+        hidden_states = op.scaled_dot_product_attention(
+            query, key, value, is_causal=False
+        )
 
         # Return to proper shape.
         hidden_states = op.reshape(hidden_states, (0, -1, self.heads * head_dim))

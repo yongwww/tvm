@@ -246,7 +246,8 @@ class MethodSpec:
                 elements = type(arg_spec.elements)(
                     [
                         _convert_input(
-                            arg_name=arg_name + f"_tmp{i}", arg_spec=arg_spec.elements[i]
+                            arg_name=arg_name + f"_tmp{i}",
+                            arg_spec=arg_spec.elements[i],
                         )
                         for i in range(len(arg_spec.elements))
                     ]
@@ -393,7 +394,7 @@ class ExternModuleSpec:  # pylint: disable=too-few-public-methods
 
 
 class SpecBuilder:
-    """Builder of ModuleSpec, which exports an nn.Module to TVM IRModule."""
+    """Builder of ModuleSpec, which exports a nn.Module to TVM IRModule."""
 
     _tls = threading.local()
 
@@ -430,7 +431,9 @@ class SpecBuilder:
         def _params() -> typing.List[typing.Tuple[str, core.Parameter]]:
             params = []
             for name, param in core._attribute_finder(
-                spec.module, prefix="", condition_yield=lambda x: isinstance(x, core.Parameter)
+                spec.module,
+                prefix="",
+                condition_yield=lambda x: isinstance(x, core.Parameter),
             ):
                 params.append((name, param))
             return params
@@ -449,7 +452,9 @@ class SpecBuilder:
             result = []
             used = set()
             for _, extern_module in core._attribute_finder(
-                spec.module, "", condition_yield=lambda x: isinstance(x, core.ExternModule)
+                spec.module,
+                "",
+                condition_yield=lambda x: isinstance(x, core.ExternModule),
             ):
                 if extern_module not in used:
                     used.add(extern_module)

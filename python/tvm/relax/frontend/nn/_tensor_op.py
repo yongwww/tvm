@@ -69,8 +69,26 @@ class _TensorOp:
     def reshape(self, shape):
         return _op().reshape(self, shape)
 
+    def expand(self, sizes):
+        return _op().expand(self, sizes)
+
+    def mean(self, axis=None, keepdim=False):
+        return _op().mean(self, axis, keepdim)
+
     def permute_dims(self, axes):
         return _op().permute_dims(self, axes)
 
+    def pow(self, other):
+        return _op().pow(self, other)
+
     def repeat(self, repeats: int, axis: Optional[int] = None):
         return _op().repeat(self, repeats, axis)
+
+    def zero(self):
+        return _op().zeros(self)
+
+    def one(self):
+        return _op().ones(self)
+
+    def unsqueeze(self, dim):
+        return _op().unsqueeze(self, dim)
