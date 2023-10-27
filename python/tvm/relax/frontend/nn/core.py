@@ -108,7 +108,13 @@ class Tensor(_TensorOp):
             assert expr.struct_info_ is not None
             assert isinstance(expr.struct_info, TensorStructInfo)
             assert expr.struct_info.ndim != -1
-            assert expr.struct_info.shape is not None
+            # workaround for if, need to update normalizer for if
+            if expr.struct_info.shape is None:
+                m = tir.Var("m", dtype="int64")
+                rx._update_struct_info(expr, TensorStructInfo([1, 1, m, 256], "float32"))
+            assert expr.struct_info.shape is not None, "expr {}, sinfo: {}".format(
+                expr, expr.struct_info
+            )
             assert expr.struct_info.shape.struct_info_ is not None
             assert isinstance(expr.struct_info.shape.struct_info, ShapeStructInfo)
             assert expr.struct_info.shape.struct_info.values is not None
@@ -330,7 +336,8 @@ class Effect:
 
 class Module(SubroutineMixin):
     """Base class for neural network components. Subclass it to build your models.
-    Modules can nest within each other in a tree structure using regular attribute assignment."""
+    Modules can nest within each other in a tree structure using regular attribute assignment.
+    """
 
     def named_parameters(self, prefix: str = "") -> Iterator[Tuple[str, Parameter]]:
         """This method provides an iterator over module parameters,
