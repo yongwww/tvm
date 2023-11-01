@@ -22,6 +22,7 @@
  * \brief Allocate and manage memory for the runtime.
  */
 #include <tvm/runtime/memory/memory_manager.h>
+#include <tvm/runtime/registry.h>
 
 #include <memory>
 #include <utility>
@@ -166,6 +167,27 @@ Allocator* MemoryManager::GetAllocator(Device dev, AllocatorType type) {
   return it->second.at(type).get();
 }
 
+void MemoryManager::Clear() {
+  MemoryManager* m = MemoryManager::Global();
+  std::lock_guard<std::mutex> lock(m->mu_);
+
+  //  std::unordered_map<Device, std::unordered_map<AllocatorType, std::unique_ptr<Allocator>>>
+  //  allocators_;
+  // MemoryManager::GetAllocator(buffer->device, buffer->alloc_type)->Free(*(buffer));
+  for (const auto& kv : m->allocators_) {
+    for (const auto& [type, allocator] : kv.second) {
+      Allocator* alloc = allocator.get();
+      // How to get the buffer argument for ->Free function ???
+      // alloc->Free();
+    }
+  }
+  // auto* ptr = static_cast<NDArray::Container*>(obj);
+  // Buffer* buffer = reinterpret_cast<Buffer*>(ptr->manager_ctx);
+
+  // clear the allocators
+  m->allocators_.clear();
+}
+
 NDArray Allocator::Empty(ShapeTuple shape, DLDataType dtype, DLDevice dev,
                          Optional<String> mem_scope) {
   VerifyDataType(dtype);
@@ -197,6 +219,8 @@ Buffer Allocator::Alloc(Device dev, ShapeTuple shape, DLDataType type_hint,
              << "specified memory scope: " << mem_scope;
   return {};
 }
+
+TVM_REGISTER_GLOBAL("vm.builtin.memory_manager.clear").set_body_typed(MemoryManager::Clear);
 
 }  // namespace memory
 }  // namespace runtime
