@@ -1090,7 +1090,7 @@ def broadcast_to(x: Tensor, shape: Sequence[IntExpr], name: str = "broadcast_to"
     return wrap_nested(_op.broadcast_to(x._expr, shape), name)
 
 
-def permute_dims(x: Tensor, axes: Optional[List[int]] = None, name: str = None) -> Tensor:
+def permute_dims(x: Tensor, axes: Optional[List[int]] = None, name: str = "permute_dims") -> Tensor:
     """Permutes the dimensions of an array.
 
     Parameters
@@ -1566,7 +1566,7 @@ def sigmoid(x: Tensor, name: str = "sigmoid") -> Tensor:
     return wrap_nested(_op.sigmoid(x._expr), name)
 
 
-def softmax(x: Tensor, dim: int = -1, name: str = "softmax") -> Tensor:
+def softmax(x: Tensor, axis: int = -1, name: str = "softmax") -> Tensor:
     r"""Computes softmax.
 
     .. math:: \text{softmax}(x)_i = \frac{\exp(x_i)}{\sum_j \exp(x_j)}
@@ -1576,7 +1576,7 @@ def softmax(x: Tensor, dim: int = -1, name: str = "softmax") -> Tensor:
     data: Tensor
         The input data to the operator.
 
-    dim: int
+    axis: int
         The axis to sum over when computing softmax.
         If not specified, it is by default the last axis of the input tensor.
         Supports negative indexing.
@@ -1593,7 +1593,7 @@ def softmax(x: Tensor, dim: int = -1, name: str = "softmax") -> Tensor:
     ----
     The input tensor is required to have float dtype
     """
-    return _wrap_nested(_op.nn.softmax(x._expr, dim), name)
+    return _wrap_nested(_op.nn.softmax(x._expr, axis), name)
 
 
 def dropout(x: Tensor, p: float = 0.5, name: str = "dropout") -> Tensor:

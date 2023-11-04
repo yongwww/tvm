@@ -224,10 +224,10 @@ class LayoutConvertMutator : public ExprMutator {
       }
     }
     Array<Expr> new_fields = RewriteArgs(val->fields, std::move(input_layout));
-    if (IsNestedTensor(binding->var)) {
-      ReEmitBinding(binding, builder_->Normalize(Tuple(new_fields)));
-      var_layout_map_[binding->var] = input_layout;
-    }
+
+    // TODO(yongwww): Another option is to add a hasNestedTensor to return true if Tensor is in
+    ReEmitBinding(binding, builder_->Normalize(Tuple(new_fields)));
+    var_layout_map_[binding->var] = input_layout;
   }
 
   void VisitBinding_(const VarBindingNode* binding, const TupleGetItemNode* val) final {
