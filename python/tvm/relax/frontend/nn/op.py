@@ -1032,7 +1032,7 @@ def mean(x: Tensor, axis=None, keepdim: bool = False, name: str = "mean"):
     return _wrap_nested(_op.mean(x._expr, axis, keepdim), name)
 
 
-def pow(x1: Tensor, x2: Tensor, name: str = "mean"):
+def pow(x1: Tensor, x2: Tensor, name: str = "pow"):
     """Power with numpy-style broadcasting.
 
     Parameters
@@ -1055,7 +1055,7 @@ def pow(x1: Tensor, x2: Tensor, name: str = "mean"):
     return _wrap_nested(_op.power(x1._expr, x2._expr), name)
 
 
-def sqrt(x: Tensor, name: str = "mean"):
+def sqrt(x: Tensor, name: str = "sqrt"):
     """Compute element-wise square root of the input data.
 
     Parameters
