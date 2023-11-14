@@ -49,28 +49,33 @@ def get_inputs():
     return inputs
 
 
-def get_transformers_torch_sam():
+def get_transformers_torch_sam(type="base"):
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    config = SamConfig()
+    if type == "base":
+        tmp_sam = PTSamModel.from_pretrained("facebook/sam-vit-base") #.to(device)
+    else:
+        tmp_sam = PTSamModel.from_pretrained("facebook/sam-vit-huge")
+    
+    config = tmp_sam.config
     return PTSamModel(config).to(device)
+    # sam_huge_config = model.config
 
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-config = SamConfig()
-pt_sam_model = PTSamModel(config).to(device)
+# device = "cuda" if torch.cuda.is_available() else "cpu"
+# config = SamConfig()
+# pt_sam_model = PTSamModel(config).to(device)
 
 
-def test_transformers_sam():
+def test_transformers_sam(pt_sam_model=None):
     # print("input:  ", k, " shape:  ", v.shape) for k, v in inputs.data.items()
     inputs = get_inputs()
-    global pt_sam_model
 
     # Warmup with 5 runs
     num_warms = 5
     for i in range(num_warms):
         pt_sam_model(**inputs)
 
-    iterations = 20
+    iterations = 15
     # measure perf
     start_time = time.time()
     for i in range(iterations):
@@ -87,6 +92,10 @@ def test_transformers_sam_huge():
     # torch.backends.cuda.max_split_size_mb = 512
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = PTSamModel.from_pretrained("facebook/sam-vit-huge").to(device)
+    sam_huge_config = model.config
+    print(sam_huge_config)
+    relax_model = RXSamModel(sam_huge_config)
+    """
     processor = SamProcessor.from_pretrained("facebook/sam-vit-huge")
 
     img_url = "https://huggingface.co/ybelkada/segment-anything/resolve/main/assets/car.png"
@@ -94,7 +103,7 @@ def test_transformers_sam_huge():
     input_points = [[[450, 600]]]  # 2D location of a window in the image
 
     inputs = processor(raw_image, input_points=input_points, return_tensors="pt").to(device)
-    torch.cuda.empty_cache()
+    # torch.cuda.empty_cache()
     outputs = model(**inputs)
 
     masks = processor.image_processor.post_process_masks(
@@ -105,6 +114,7 @@ def test_transformers_sam_huge():
     scores = outputs.iou_scores
 
     print("result score: ", scores)
+    """
 
 
 def _run_opt_passes(mod, params=None, fp16_input_names=None, combine_matmul=False):
@@ -161,18 +171,20 @@ def _offload_to_cutlass(mod, target):
     return mod
 
 
-def test_tvm_sam():
+def test_tvm_sam(pt_sam_model=None):
     batch_size, total_seq_len, dtype = 1, 32, "float32"
+    # get the config
+    config = pt_sam_model.config
 
     mod_spec = {
         "get_image_embeddings": {
             # (batch_size, num_channels, height, width)
-            "pixel_values": spec.Tensor([1, 3, 1024, 1024], "float32"),
+            "pixel_values": spec.Tensor([1, 3, 1024, 1024], dtype),
         },
-        "get_prompt_embeddings": {"input_points": spec.Tensor([1, 1, 1, 2], "float32")},
+        "get_prompt_embeddings": {"input_points": spec.Tensor([1, 1, 1, 2], dtype)},
         "forward": {
-            "pixel_values": spec.Tensor([1, 3, 1024, 1024], "float32"),
-            "input_points": spec.Tensor([1, 1, 1, 2], "float32"),
+            "pixel_values": spec.Tensor([1, 3, 1024, 1024], dtype),
+            "input_points": spec.Tensor([1, 1, 1, 2], dtype),
         },
     }
 
@@ -215,7 +227,6 @@ def test_tvm_sam():
     vm = relax.VirtualMachine(exe, dev)
 
     # Prepare inputs for inference
-    global pt_sam_model
     tvm_params = {}
     for k, v in pt_sam_model.state_dict().items():
         tvm_params[k] = tvm.nd.array(v.cpu().numpy(), dev)
@@ -347,8 +358,16 @@ def test_tvm_profile():
     print("Profiling report: \n", report)
 
 
+
 if __name__ == "__main__":
-    test_tvm_sam()
-    test_transformers_sam()
+
+    pt_sam_model = get_transformers_torch_sam("huge")
+    test_tvm_sam(pt_sam_model)
+    test_transformers_sam(pt_sam_model)
+    
+
+    # test_tvm_sam()
+    # test_transformers_sam()
     # test_transformers_sam_huge()
+    # test_tvm_sam_huge()
     # test_tvm_profile()
