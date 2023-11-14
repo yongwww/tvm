@@ -28,7 +28,7 @@ def run_opt_passes(mod, params=None, fp16_input_names=None, combine_matmul=False
     passes = [
         relax.transform.EliminateCommonSubexpr(),
         relax.transform.CanonicalizeBindings(),
-        relax.transform.ConvertLayout({"relax.nn.conv2d": ["NHWC", "OHWI"]}),
+        # relax.transform.ConvertLayout({"relax.nn.conv2d": ["NHWC", "OHWI"]}),
         # get_rewrite_pass(combine_matmul)
         relax.transform.DeadCodeElimination(["main"]),
     ]
@@ -78,7 +78,7 @@ def run_lower_passes(mod, target, do_tuning=True):
                         max_trials_per_task=50,
                     )
                 )
-            passes.append(relax.transform.MetaScheduleApplyDatabase(work_dir))
+            # passes.append(relax.transform.MetaScheduleApplyDatabase(work_dir))
             passes.append(tir.transform.DefaultGPUSchedule())
 
     with target, tvm.transform.PassContext(opt_level=3):
