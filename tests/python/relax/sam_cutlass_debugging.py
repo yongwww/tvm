@@ -2,10 +2,8 @@ import numpy as np
 
 import tvm
 from tvm import relax, tir
-
 from tvm.script import ir as I
 from tvm.script import relax as R, tir as T
-
 import tvm.testing
 import tvm.topi.testing
 
@@ -40,6 +38,27 @@ def run_opt_passes(mod, params=None, fp16_input_names=None, combine_matmul=False
         """,
 
     return tvm.transform.Sequential(passes)(mod)
+
+
+def offload_to_cutlass(
+    mod, target, entry_functions=["main", "get_prompt_embeddings", "get_image_embeddings"]
+):
+    # Currently, sm86 is not supported.
+    sm = int(target.arch.split("_")[1])
+    print("sm: ", sm)
+    if sm > 80:
+        sm = 80
+    mod = partition_for_cutlass(mod)
+
+    # print("Module with R.cos after cutlass partition: \n", mod.script(show_meta=True))
+    # mod.show()
+    mod = relax.transform.RunCodegen(
+        {"cutlass": {"sm": sm, "find_first_valid": False}},
+        entry_functions=entry_functions,
+    )(mod)
+    # print("Module with R.sqrt after cutlass RunCodegen: \n", mod.script(show_meta=True))
+
+    return mod
 
 
 def run_lower_passes(mod, target, do_tuning=True):
@@ -221,27 +240,6 @@ class Module:
         return (matmul146, debugging)
 
 
-def _offload_to_cutlass(
-    mod, target, entry_functions=["main", "get_prompt_embeddings", "get_image_embeddings"]
-):
-    # Currently, sm86 is not supported.
-    sm = int(target.arch.split("_")[1])
-    print("sm: ", sm)
-    if sm > 80:
-        sm = 80
-    mod = partition_for_cutlass(mod)
-
-    # print("Module with R.cos after cutlass partition: \n", mod.script(show_meta=True))
-    # mod.show()
-    mod = relax.transform.RunCodegen(
-        {"cutlass": {"sm": sm, "find_first_valid": False}},
-        entry_functions=entry_functions,
-    )(mod)
-    # print("Module with R.sqrt after cutlass RunCodegen: \n", mod.script(show_meta=True))
-
-    return mod
-
-
 def get_random_inputs(max_val=1):
     input_points = tvm.nd.array(np.random.rand(1, 1, 1, 2).astype(np.float32), tvm.gpu())
     embedding = tvm.nd.array(
@@ -261,7 +259,7 @@ def test_matmul_cutlass(inputs=None, apply_cutlass=True):
     mod = run_opt_passes(mod, combine_matmul=False)
     # print(mod.script(show_meta=True))
     if apply_cutlass:
-        mod = _offload_to_cutlass(mod, target, ["main"])
+        mod = offload_to_cutlass(mod, target, ["main"])
     else:
         # print("Module with R.cos w/o cutlass: \n", mod.script(show_meta=True))
         pass
@@ -276,13 +274,11 @@ def test_matmul_cutlass(inputs=None, apply_cutlass=True):
     # print("Sam with cos exe (no cutlass): \n", exe.as_text())
     vm = relax.VirtualMachine(exe, dev)
 
-    # vm_profiler = relax.VirtualMachine(exe, tvm.gpu(), profile=True)
-    # report = vm_profiler.profile(entry_name, *input_args)
-
     return vm[entry_name](*inputs)
 
 
 if __name__ == "__main__":
+    # inputs = get_random_inputs(max_val=1)
     inputs = get_random_inputs(max_val=1000)
 
     out2 = test_matmul_cutlass(inputs, apply_cutlass=False)
