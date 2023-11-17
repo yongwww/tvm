@@ -254,7 +254,7 @@ def test_tvm_sam(pt_sam_model=None):
     for i in range(num_warms):
         vm[entry_name](*input_args)
 
-    iterations = 10
+    iterations = 15
     # measure perf
     start_time = time.time()
     for i in range(iterations):
