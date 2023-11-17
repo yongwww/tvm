@@ -596,10 +596,20 @@ def partition_for_cutlass(mod, annotate_codegen=True, use_flash_mqa=True):
         mod[func_name] = func
 
     patterns = get_patterns_with_prefix("cutlass")
+
+    matmul_names = ['cutlass.matmul']
+    new_patterns = []
+    for pat in patterns:
+        if pat.name in matmul_names:
+            new_patterns.append(pat)
+    pat_names = [pat.name for pat in new_patterns]
+
+    print("The applied cutlass patterns: ", pat_names)
+
     return tvm.transform.Sequential(
         [
             transform.FuseOpsByPattern(
-                patterns, bind_constants=False, annotate_codegen=annotate_codegen
+                new_patterns, bind_constants=False, annotate_codegen=annotate_codegen
             ),
             annotate_workspace,
             transform.AllocateWorkspace(),
