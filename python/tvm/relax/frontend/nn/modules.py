@@ -71,9 +71,7 @@ class IOEffect(Effect):
 
 @register_func("effect.print")
 def _print(_, array: NDArray) -> None:
-    print(
-        f"effect.print: shape = {array.shape}, dtype = {array.dtype}, data =\n{array}"
-    )
+    print(f"effect.print: shape = {array.shape}, dtype = {array.dtype}, data =\n{array}")
 
 
 class ReLU(Module):
@@ -466,7 +464,7 @@ class ConvTranspose2D(Module):
         ret : Tensor
             The output tensor for the convtranspose2d layer.
         """
-        print("debuggging x shape: ", x.shape)
+        # print("debuggging x shape: ", x.shape)
         return op.conv2d_transpose(
             x,
             self.weight,
@@ -591,9 +589,7 @@ class GroupNorm(Module):
             self.weight = None
             self.bias = None
 
-    def forward(
-        self, x: Tensor, channel_axis: int = 1, axes: Optional[List[int]] = None
-    ):
+    def forward(self, x: Tensor, channel_axis: int = 1, axes: Optional[List[int]] = None):
         """
         Forward method for group norm layer.
 
@@ -641,9 +637,7 @@ class KVCache(Effect):
         self.unit_shape = [int(i) for i in unit_shape]
         self.dtype = dtype
 
-    def emit_init(
-        self, name_hint: str, bb: rx.BlockBuilder
-    ):  # pylint: disable=arguments-renamed
+    def emit_init(self, name_hint: str, bb: rx.BlockBuilder):  # pylint: disable=arguments-renamed
         """
         Emit the initialization of the KVCache effect.
 
@@ -928,9 +922,7 @@ class Attention(Module):
         scale_qk: bool = True,
     ):
         self.query_dim = query_dim
-        self.cross_attention_dim = (
-            cross_attention_dim if cross_attention_dim else query_dim
-        )
+        self.cross_attention_dim = cross_attention_dim if cross_attention_dim else query_dim
         self.heads = heads
         self.dim_head = dim_head
         self.bias = bias
@@ -954,9 +946,7 @@ class Attention(Module):
         else:
             self.group_norm = None
 
-        self.to_out = ModuleList(
-            [Linear(self.inner_dim, self.query_dim, bias=self.out_bias)]
-        )
+        self.to_out = ModuleList([Linear(self.inner_dim, self.query_dim, bias=self.out_bias)])
 
     def forward(
         self,
@@ -1000,9 +990,7 @@ class Attention(Module):
         key = op.reshape(key, [0, -1, self.heads, head_dim])
         value = op.reshape(value, [0, -1, self.heads, head_dim])
 
-        hidden_states = op.scaled_dot_product_attention(
-            query, key, value, is_causal=False
-        )
+        hidden_states = op.scaled_dot_product_attention(query, key, value, is_causal=False)
 
         # Return to proper shape.
         hidden_states = op.reshape(hidden_states, (0, -1, self.heads * head_dim))

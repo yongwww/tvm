@@ -289,9 +289,7 @@ def divide(a: Tensor, b: Tensor, name: str = "divide") -> Tensor:
     return _wrap_nested(_op.divide(a._expr, b._expr), name)
 
 
-def cumsum(
-    x: Tensor, axis: Optional[int] = None, dtype=None, name: str = "cumsum"
-) -> Tensor:
+def cumsum(x: Tensor, axis: Optional[int] = None, dtype=None, name: str = "cumsum") -> Tensor:
     """Numpy style cumsum op. Return the cumulative inclusive sum of the elements along
     a given axis.
 
@@ -456,10 +454,7 @@ def einsum(operands, subscripts, name: str = "einsum"):
     result : relax.Expr
         The output from the einsum op.
     """
-    operands = [
-        operand._expr if isinstance(operand, Tensor) else operand
-        for operand in operands
-    ]
+    operands = [operand._expr if isinstance(operand, Tensor) else operand for operand in operands]
     return _wrap_nested(_op.einsum(operands, subscripts), name)  # type: ignore
 
 
@@ -543,9 +538,7 @@ def sum(
     return _wrap_nested(_op.sum(x._expr, axis, keepdims), name)  # type: ignore
 
 
-def expand_dims(
-    x: Tensor, axis: Union[int, List[int]], name: str = "expand_dims"
-) -> Tensor:
+def expand_dims(x: Tensor, axis: Union[int, List[int]], name: str = "expand_dims") -> Tensor:
     """Insert new axes at the positions given by `axis`.
 
     Parameters
@@ -596,9 +589,7 @@ def flatten(data, start_dim=0, end_dim=-1):
     return out
 
 
-def matmul(
-    a: Tensor, b: Tensor, out_dtype: Optional[str] = None, name: str = "matmul"
-) -> Tensor:
+def matmul(a: Tensor, b: Tensor, out_dtype: Optional[str] = None, name: str = "matmul") -> Tensor:
     """General matrix multiplication of two tensors, with broadcasting on batched dimensions.
 
     The semantics and output shape deduction rule is specified as
@@ -939,8 +930,7 @@ def conv2d_transpose(
         groups=groups,
     )
     if bias is not None:
-        print("897 bias: ", bias)
-        pass
+        print("TODO (yongwww): add test case to cover this bias", bias)
         # conv_out = _op.add(conv_out, _op.reshape(bias._expr, [1, -1, 1]))
 
     return _wrap_nested(conv_out, name)
@@ -1075,9 +1065,7 @@ def sqrt(x: Tensor, name: str = "sqrt"):
     return _wrap_nested(_op.sqrt(x._expr), name)
 
 
-def broadcast_to(
-    x: Tensor, shape: Sequence[IntExpr], name: str = "broadcast_to"
-) -> Tensor:
+def broadcast_to(x: Tensor, shape: Sequence[IntExpr], name: str = "broadcast_to") -> Tensor:
     """Broadcasts a tensor to a specified shape.
 
     Parameters
@@ -1099,9 +1087,7 @@ def broadcast_to(
     return _wrap_nested(_op.broadcast_to(x._expr, shape), name)
 
 
-def permute_dims(
-    x: Tensor, axes: Optional[List[int]] = None, name: str = "permute_dims"
-) -> Tensor:
+def permute_dims(x: Tensor, axes: Optional[List[int]] = None, name: str = "permute_dims") -> Tensor:
     """Permutes the dimensions of an array.
 
     Parameters
@@ -1229,9 +1215,7 @@ def expand(x: Tensor, sizes: Sequence[IntExpr], name="expand") -> Tensor:
     return _wrap_nested(out, name)
 
 
-def repeat(
-    x: Tensor, repeats: int, axis: Optional[int] = None, name="repeat"
-) -> Tensor:
+def repeat(x: Tensor, repeats: int, axis: Optional[int] = None, name="repeat") -> Tensor:
     """Repeats elements of an array.
 
     Parameters
@@ -1268,9 +1252,7 @@ def repeat(
     return _wrap_nested(_op.repeat(x._expr, repeats, axis), name)
 
 
-def tile(
-    data: Tensor, repeats: Union[int, Tuple[int], List[int]], name="tile"
-) -> Tensor:
+def tile(data: Tensor, repeats: Union[int, Tuple[int], List[int]], name="tile") -> Tensor:
     """Construct an array by repeating data the number of times given by repeats.
 
     If repeats has length l, and data has dimension d, the result will have dimension of max(l, d).
@@ -1555,13 +1537,7 @@ def gelu(x: Tensor, approximate: Optional[str] = None, name: str = "gelu") -> Te
             * x._expr
             * (
                 tanh_const
-                * (
-                    x._expr
-                    + (
-                        rx.const(0.044715, dtype)
-                        * _op.power(x._expr, rx.const(3, "int32"))
-                    )
-                )
+                * (x._expr + (rx.const(0.044715, dtype) * _op.power(x._expr, rx.const(3, "int32"))))
             )
         )
     else:
@@ -2056,9 +2032,7 @@ def pad(
     result : Tensor
         Padded output tensor.
     """
-    return _wrap_nested(
-        _op.nn.pad(x._expr, pad_width=pad, pad_value=value, pad_mode=mode), name
-    )
+    return _wrap_nested(_op.nn.pad(x._expr, pad_width=pad, pad_value=value, pad_mode=mode), name)
 
 
 def arange(
