@@ -932,8 +932,7 @@ def conv2d_transpose(
         groups=groups,
     )
     if bias is not None:
-        print("897 bias: ", bias)
-        pass
+        print("TODO (yongwww): add test case to cover this bias", bias)
         # conv_out = _op.add(conv_out, _op.reshape(bias._expr, [1, -1, 1]))
 
     return _wrap_nested(conv_out, name)

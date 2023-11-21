@@ -513,7 +513,7 @@ def conv2d_transpose(
     )
 
 
-def pad(data, pad_width, pad_value=0, pad_mode="constant"):
+def pad(data, pad_value=0, pad_width=None, pad_mode="constant"):
     r"""Padding
 
     This operator takes in a tensor and pads each axis by the specified

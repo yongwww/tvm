@@ -258,6 +258,26 @@ def test_layer_norm():
     _check(foo, bb.get()["foo"])
 
 
+def test_pad():
+    @R.function
+    def foo(
+        x: R.Tensor((1, 64, 64, 768), dtype="float32")
+    ) -> R.Tensor((1, 70, 70, 768), dtype="float32"):
+        gv: R.Tensor((1, 70, 70, 768), dtype="float32") = R.nn.pad(
+            x, pad_width=[0, 0, 0, 6, 0, 6, 0, 0]
+        )
+        return gv
+
+    x = relax.Var("x", R.Tensor((1, 64, 64, 768), "float32"))
+
+    bb = relax.BlockBuilder()
+    with bb.function("foo", [x]):
+        gv = bb.emit(relax.op.nn.pad(x, pad_width=[0, 0, 0, 6, 0, 6, 0, 0]))
+        bb.emit_func_output(gv)
+
+    _check(foo, bb.get()["foo"])
+
+
 def test_group_norm():
     @R.function
     def foo(

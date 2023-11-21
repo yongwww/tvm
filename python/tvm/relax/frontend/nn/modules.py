@@ -411,7 +411,7 @@ class ConvTranspose2D(Module):
         ret : Tensor
             The output tensor for the convtranspose2d layer.
         """
-        print("debuggging x shape: ", x.shape)
+        # print("debuggging x shape: ", x.shape)
         return op.conv2d_transpose(
             x,
             self.weight,
