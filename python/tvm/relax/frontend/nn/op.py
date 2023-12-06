@@ -53,8 +53,6 @@ def _wrap_nested(expr: rx.Expr, name: str) -> Union[Tensor, Sequence[Tensor]]:
     if not isinstance(expr, rx.DataflowVar):
         expr = BlockBuilder.current().emit(expr, name)
     if isinstance(expr.struct_info_, TensorStructInfo):
-        if hasattr(expr, "op"):
-            print("fuckk expr: ", expr.op, ". expr.struct_info_: ", expr.struct_info_)
         return Tensor(_expr=expr)
     if isinstance(expr.struct_info_, TupleStructInfo):
         return tuple(
