@@ -1,4 +1,5 @@
 import numpy as np
+import time
 import torch
 
 import tvm
@@ -12,7 +13,7 @@ from tvm.relax.backend.contrib.cutlass import partition_for_cutlass
 
 
 def offload_to_cutlass(
-    mod, target, entry_functions=["main", "get_prompt_embeddings", "get_image_embeddings"]
+    mod, target, entry_functions=["main"]
 ):
     # Currently, sm86 is not supported.
     sm = int(target.arch.split("_")[1])
@@ -57,72 +58,46 @@ def run_lower_passes(mod, target, do_tuning=True):
 @I.ir_module
 class TVMModule:
     @R.function
-    def main(subtract2: R.Tensor((64, 64, 2), dtype="float16"), # [-1, 1], like -0.9844,  0.9844
-             prompt_encoder_shared_embedding_positional_embedding: R.Tensor((2, 128), dtype="float16")): # [-1000, 1000.0], norm distri
+    def main(x: R.Tensor((64, 64, 2), dtype="float16"), # [-1, 1], like -0.9844,  0.9844
+             y: R.Tensor((2, 128), dtype="float16")): # [-1000, 1000.0], norm distri
         R.func_attr({"global_symbol": "main", "num_input": 2})
         with R.dataflow():
-            matmul: R.Tensor((64, 64, 128), dtype="float16") = R.matmul(subtract2, prompt_encoder_shared_embedding_positional_embedding, out_dtype="void")
-            mul: R.Tensor((64, 64, 128), dtype="float16") = R.multiply(R.const(6.28125, "float16"), matmul)
-            sin: R.Tensor((64, 64, 128), dtype="float16") = R.sin(mul)
-            cos: R.Tensor((64, 64, 128), dtype="float16") = R.cos(mul)
-            gv: R.Tensor((64, 64, 256), dtype="float16") = R.concat((sin, cos), axis=2)
+            matmul: R.Tensor((64, 64, 128), dtype="float16") = R.matmul(x, y, out_dtype="void")
+            gv = matmul
             R.output(gv)
         return gv
 
-torch.backends.cuda.matmul.allow_tf32 = False
+# torch.backends.cuda.matmul.allow_tf32 = False
 class PTModel(torch.nn.Module):
     def __init__(self):
         super(PTModel, self).__init__()
-        # Any additional initializations can be added here
 
-    def forward(self, coordinates, positional_embedding):
-        # Ensure the inputs are in FP16
-        # TODO: coordinates = coordinates.to(torch.float16)
-        # positional_embedding = positional_embedding.to(torch.float16)
-
-        # Main logic
-        coordinates = torch.matmul(coordinates, positional_embedding)
-        coordinates = 2 * np.pi * coordinates
-
-        # Concatenating sin and cos transformations
-        return torch.cat([torch.sin(coordinates), torch.cos(coordinates)], dim=-1)
+    def forward(self, x, y):
+        # assert x.dtype == torch.float16, y.dtype == torch.float16
+        return torch.matmul(x, y)
 
 
-def np_model(coordinates, positional_embedding):
+def np_model(x, y):
     # Ensure the inputs are in FP16
-    # coordinates = coordinates.astype(np.float16)
-    # positional_embedding = positional_embedding.astype(np.float16)
-
-    # Main logic
-    coordinates = np.matmul(coordinates, positional_embedding)
-    coordinates = 2 * np.pi * coordinates
-
-    # Concatenating sin and cos transformations
-    sin_coordinates = np.sin(coordinates)
-    cos_coordinates = np.cos(coordinates)
-    return np.concatenate([sin_coordinates, cos_coordinates], axis=-1)
+    # x = x.astype(np.float16)
+    # y = y.astype(np.float16)
+    return np.matmul(x, y)
 
 
-def jax_model(coordinates, positional_embedding):
+def jax_model(x, y):
     import jax
     import jax.numpy as jnp
     # Convert the numpy inputs to JAX arrays
-    coordinates = jnp.array(coordinates)
-    positional_embedding = jnp.array(positional_embedding)
+    x = jnp.array(x)
+    y = jnp.array(y)
 
     # Ensure the inputs are in FP16
-    # coordinates = coordinates.astype(jnp.float16)
-    # positional_embedding = positional_embedding.astype(jnp.float16)
+    # x = x.astype(jnp.float16)
+    # y = y.astype(jnp.float16)
 
     # Main logic
-    coordinates = jnp.matmul(coordinates, positional_embedding)
-    coordinates = 2 * jnp.pi * coordinates
-
-    # Concatenating sin and cos transformations
-    sin_coordinates = jnp.sin(coordinates)
-    cos_coordinates = jnp.cos(coordinates)
-    return jnp.concatenate([sin_coordinates, cos_coordinates], axis=-1)
-
+    mm = jnp.matmul(x, y)
+    return jax.device_get(mm)
 
 def get_numpy_inputs(max_val=1):
     np.random.seed(1)
@@ -132,9 +107,9 @@ def get_numpy_inputs(max_val=1):
     return [ipt0, ipt1]
 
 
-def compile_sam(apply_cutlass=True):
+def compile(apply_cutlass=True):
     entry_name = "main"
-    dtype = "float32"
+    # dtype = "float32"
     target, dev = tvm.target.Target("nvidia/nvidia-a100"), tvm.gpu()
 
     mod = TVMModule
@@ -151,6 +126,7 @@ def compile_sam(apply_cutlass=True):
 
     # print(mod.script(show_meta=True))
 
+    mod.show()
     exe = relax.build(mod, target=target)
     # print("Sam with cos exe: \n", exe.as_text())
     # print(
@@ -173,9 +149,11 @@ def test_correctness():
     pt_inputs = [torch.from_numpy(input).to(device) for input in np_inputs]
     pt_inputs_fp32 = [torch.from_numpy(input).to(device) for input in np_inputs_fp32]
     
-    vm_wo_cutlass = compile_sam(apply_cutlass=False)
+    vm_wo_cutlass = compile(apply_cutlass=False)
+    vm_w_cutlass = compile(apply_cutlass=True)
 
     tvm_out = vm_wo_cutlass[entry_name](*tvm_inputs)
+    tvm_out_cutlass = vm_w_cutlass[entry_name](*tvm_inputs)
     pt_mod = PTModel().to(device)
     pt_out = pt_mod(*pt_inputs)
     pt_out_fp32 = pt_mod(*pt_inputs_fp32)
@@ -184,10 +162,43 @@ def test_correctness():
     jax_out = jax_model(*np_inputs)
     jax_out_fp32 = jax_model(*np_inputs_fp32)
 
+    ### Measure single op perf
+    def _measure(ex, inputs, num_warms=100, iterations=1000):
+        for i in range(num_warms):
+            ex(*inputs)
+
+        start_time = time.time()
+        for i in range(iterations):
+            ex(*inputs)
+        duration = (time.time() - start_time) * 1000 / iterations
+        return duration
+    
+    tvm_matmul_cutlass_perf = _measure(vm_w_cutlass[entry_name], tvm_inputs)
+    tvm_matmul_perf = _measure(vm_wo_cutlass[entry_name], tvm_inputs)
+    pt_matmul_perf = _measure(pt_mod, pt_inputs)
+    print("TVM matmul + cutlass perf: ", tvm_matmul_cutlass_perf)
+    print("TVM matmul perf: ", tvm_matmul_perf)
+    print("PyTorch matmul perf: ", pt_matmul_perf)
+
+
+
+    
+
+
     # print("np_out: \n", np_out)
     # print("np_out_fp32, dtype: : ", np_out_fp32.dtype, "\nvalue: \n: ", np_out_fp32)
     # print("jax_out: \n", jax_out)
     # print("jax_out_fp32: \n", jax_out_fp32)
+    tvm.testing.assert_allclose(
+            jax_out, np_out,# rtol=1e-1, atol=1e-1
+    )
+    tvm.testing.assert_allclose(
+            tvm_out.numpy(), np_out, rtol=1e-1, atol=1e-1
+    )
+    tvm.testing.assert_allclose(
+            pt_out.cpu().detach().numpy(), np_out,
+    )
+
 
     if isinstance(tvm_out, tvm.container.Array):
         for i, (o1, o2) in enumerate(zip(tvm_out, pt_out)):
@@ -205,3 +216,7 @@ if __name__ == "__main__":
     test_correctness()
     # test_pt()
     # lib_compare()
+
+
+    # Single matmul fp16 perf comparison: PT vs TVM
+
