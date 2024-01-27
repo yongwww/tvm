@@ -48,6 +48,11 @@ if __name__ == "__main__":
     if use_sccache:
         if args.sccache_bucket:
             env["SCCACHE_BUCKET"] = args.sccache_bucket
+            env["SCCACHE_REGION"] = "us-west-2"
+            if "AWS_ACCESS_KEY_ID" in os.environ:
+                env["AWS_ACCESS_KEY_ID"] = os.environ.get("AWS_ACCESS_KEY_ID")
+            if "AWS_SECRET_ACCESS_KEY" in os.environ:
+                env["AWS_SECRET_ACCESS_KEY"] = os.environ.get("AWS_SECRET_ACCESS_KEY")
             logging.info(f"Using sccache bucket: {args.sccache_bucket}")
         else:
             logging.info(f"No sccache bucket set, using local cache")
