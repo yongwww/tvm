@@ -180,7 +180,8 @@ def test_tvm_sam():
     ir_mod, _ = relax_model.export_tvm(spec=mod_spec, debug=True)
 
     mod = tvm.ir.IRModule()
-    mod["main"] = ir_mod["forward"]
+    # mod["main"] = ir_mod["forward"]
+    mod["main"] = ir_mod["forward"].with_attrs({"global_symbol": "main"})
     mod["get_prompt_embeddings"] = ir_mod["get_prompt_embeddings"]
     mod["get_image_embeddings"] = ir_mod["get_image_embeddings"]
 
@@ -188,7 +189,8 @@ def test_tvm_sam():
     entry_name = "main"
 
     # target, dev = "llvm", tvm.cpu()
-    target = tvm.target.Target("nvidia/nvidia-a100")  # tvm.target.Target("cuda", host="llvm")
+    # target = tvm.target.Target("nvidia/nvidia-a100")  # tvm.target.Target("cuda", host="llvm")
+    target = tvm.target.Target("cuda", host="llvm")
     dev = tvm.gpu()
 
     # apply passes

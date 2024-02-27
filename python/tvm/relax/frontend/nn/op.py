@@ -96,7 +96,7 @@ def concat(x: List[Tensor], dim: int, name: str = "concat") -> Tensor:
     # Convert tensors to expressions.
     ### todo (*
     # x = [t._expr for t in x]
-    # return _wrap_nested(_op.concat(x, dim), name)
+    # return wrap_nested(_op.concat(x, dim), name)
 
 
 def add(a: Tensor, b: Tensor, name: str = "add") -> Tensor:
@@ -147,7 +147,7 @@ def sin(x: Tensor, name: str = "sin") -> Tensor:
     ----
     The input tensor is required to have float dtype
     """
-    return _wrap_nested(_op.sin(x._expr), name)
+    return wrap_nested(_op.sin(x._expr), name)
 
 
 def cos(x: Tensor, name: str = "cos") -> Tensor:
@@ -170,7 +170,7 @@ def cos(x: Tensor, name: str = "cos") -> Tensor:
     ----
     The input tensor is required to have float dtype
     """
-    return _wrap_nested(_op.cos(x._expr), name)
+    return wrap_nested(_op.cos(x._expr), name)
 
 
 def subtract(a: Tensor, b: Tensor, name: str = "subtract") -> Tensor:
@@ -283,7 +283,7 @@ def cumsum(x: Tensor, axis: Optional[int] = None, dtype=None, name: str = "cumsu
         The computed result.
 
     """
-    return _wrap_nested(_op.cumsum(x._expr, axis, dtype), name)
+    return wrap_nested(_op.cumsum(x._expr, axis, dtype), name)
 
 
 def chunk(x: Tensor, chunks: int, dim: int = 0, name: str = "chunk") -> Tensor:
@@ -394,7 +394,7 @@ def strided_slice(
         begin = begin._expr
     if isinstance(end, Tensor):
         end = end._expr
-    return _wrap_nested(_op.strided_slice(x._expr, axes, begin, end, strides, assume_inbound), name)  # type: ignore
+    return wrap_nested(_op.strided_slice(x._expr, axes, begin, end, strides, assume_inbound), name)  # type: ignore
 
 
 def dynamic_strided_slice(
@@ -433,7 +433,7 @@ def dynamic_strided_slice(
     same length as rank of `data` tensor.
     """
 
-    return _wrap_nested(_op.dynamic_strided_slice(x._expr, begin._expr, end._expr, strides._expr), name)  # type: ignore
+    return wrap_nested(_op.dynamic_strided_slice(x._expr, begin._expr, end._expr, strides._expr), name)  # type: ignore
 
 
 def einsum(operands, subscripts, name: str = "einsum"):
@@ -457,7 +457,7 @@ def einsum(operands, subscripts, name: str = "einsum"):
         The output from the einsum op.
     """
     operands = [operand._expr if isinstance(operand, Tensor) else operand for operand in operands]
-    return _wrap_nested(_op.einsum(operands, subscripts), name)  # type: ignore
+    return wrap_nested(_op.einsum(operands, subscripts), name)  # type: ignore
 
 
 def equal(x1: Tensor, x2: Tensor, name: str = "equal") -> Tensor:
@@ -479,7 +479,7 @@ def equal(x1: Tensor, x2: Tensor, name: str = "equal") -> Tensor:
     result : Tensor
         The computed result.
     """
-    return _wrap_nested(_op.equal(x1._expr, x2._expr), name)  # type: ignore
+    return wrap_nested(_op.equal(x1._expr, x2._expr), name)  # type: ignore
 
 
 def not_equal(x1: Tensor, x2: Tensor, name: str = "equal") -> Tensor:
@@ -501,7 +501,7 @@ def not_equal(x1: Tensor, x2: Tensor, name: str = "equal") -> Tensor:
     result : Tensor
         The computed result.
     """
-    return _wrap_nested(_op.not_equal(x1._expr, x2._expr), name)  # type: ignore
+    return wrap_nested(_op.not_equal(x1._expr, x2._expr), name)  # type: ignore
 
 
 def sum(
@@ -537,7 +537,7 @@ def sum(
     """
     if isinstance(axis, int):
         axis = [axis]
-    return _wrap_nested(_op.sum(x._expr, axis, keepdims), name)  # type: ignore
+    return wrap_nested(_op.sum(x._expr, axis, keepdims), name)  # type: ignore
 
 
 def expand_dims(x: Tensor, axis: Union[int, List[int]], name: str = "expand_dims") -> Tensor:
@@ -563,7 +563,7 @@ def expand_dims(x: Tensor, axis: Union[int, List[int]], name: str = "expand_dims
     """
     if isinstance(axis, int):
         axis = [axis]
-    return _wrap_nested(_op.expand_dims(x._expr, axis), name)  # type: ignore
+    return wrap_nested(_op.expand_dims(x._expr, axis), name)  # type: ignore
 
 
 def flatten(data, start_dim=0, end_dim=-1):
@@ -935,7 +935,7 @@ def conv2d_transpose(
         print("TODO (yongwww): add test case to cover this bias", bias)
         # conv_out = _op.add(conv_out, _op.reshape(bias._expr, [1, -1, 1]))
 
-    return _wrap_nested(conv_out, name)
+    return wrap_nested(conv_out, name)
 
 
 def maximum(x1: Tensor, x2: Tensor, name: str = "maximum"):
@@ -1021,7 +1021,7 @@ def mean(x: Tensor, axis=None, keepdim: bool = False, name: str = "mean"):
         The computed result.
 
     """
-    return _wrap_nested(_op.mean(x._expr, axis, keepdim), name)
+    return wrap_nested(_op.mean(x._expr, axis, keepdim), name)
 
 
 def pow(x1: Tensor, x2: Tensor, name: str = "pow"):
@@ -1044,7 +1044,7 @@ def pow(x1: Tensor, x2: Tensor, name: str = "pow"):
         The computed result.
 
     """
-    return _wrap_nested(_op.power(x1._expr, x2._expr), name)
+    return wrap_nested(_op.power(x1._expr, x2._expr), name)
 
 
 def sqrt(x: Tensor, name: str = "sqrt"):
@@ -1064,7 +1064,7 @@ def sqrt(x: Tensor, name: str = "sqrt"):
         The computed result.
 
     """
-    return _wrap_nested(_op.sqrt(x._expr), name)
+    return wrap_nested(_op.sqrt(x._expr), name)
 
 
 def broadcast_to(x: Tensor, shape: Sequence[IntExpr], name: str = "broadcast_to") -> Tensor:
@@ -1108,7 +1108,14 @@ def permute_dims(x: Tensor, axes: Optional[List[int]] = None, name: str = "permu
     result : Tensor
         The permuted result.
     """
-    return _wrap_nested(_op.permute_dims(x._expr, axes=axes), name)
+    if name is None:
+        x_name = getattr(getattr(x, "_expr", None), "name_hint", None)
+        if x_name is not None and "linear" in x_name:
+            name = x_name.replace("linear", "matmul")
+        else:
+            name = "permute_dims"
+
+    return wrap_nested(_op.permute_dims(x._expr, axes=axes), name)
 
 
 def transpose(x: Tensor, dim0: int, dim1: int, name: str = "transpose") -> Tensor:
@@ -1133,13 +1140,11 @@ def transpose(x: Tensor, dim0: int, dim1: int, name: str = "transpose") -> Tenso
     result : Tensor
         The transposed result.
     """
-    if name is None:
-        x_name = getattr(getattr(x, "_expr", None), "name_hint", None)
-        if x_name is not None and "linear" in x_name:
-            name = x_name.replace("linear", "matmul")
-        else:
-            name = "permute_dims"
-
+    # TODO (yongwww): merge this into permute_dims as a special case
+    ndim = len(x.shape)
+    axes = data = list(range(ndim))
+    data[dim0] = dim1
+    data[dim1] = dim0
     return wrap_nested(_op.permute_dims(x._expr, axes=axes), name)
 
 
@@ -1216,7 +1221,7 @@ def expand(x: Tensor, sizes: Sequence[IntExpr], name="expand") -> Tensor:
         if sizes[i] != -1 and shape[i] == 1:
             out = _op.repeat(out, sizes[i], axis=i)
 
-    return _wrap_nested(out, name)
+    return wrap_nested(out, name)
 
 
 def repeat(x: Tensor, repeats: int, axis: Optional[int] = None, name="repeat") -> Tensor:
@@ -1299,10 +1304,7 @@ def tile(data: Tensor, repeats: Union[int, Tuple[int], List[int]], name="tile") 
     if isinstance(repeats, int):
         repeats = [repeats]
 
-    return _wrap_nested(_op.tile(data._expr, repeats), name)
-
-
-_op.sum
+    return wrap_nested(_op.tile(data._expr, repeats), name)
 
 
 def squeeze(x: Tensor, axis: int = -1, name: str = "squeeze") -> Tensor:
@@ -1389,7 +1391,7 @@ def where(condition: Tensor, x1: Tensor, x2: Tensor, name: str = "where") -> Ten
     ret : Tensor
         The taken result.
     """
-    return _wrap_nested(_op.where(condition._expr, x1._expr, x2._expr), name)
+    return wrap_nested(_op.where(condition._expr, x1._expr, x2._expr), name)
 
 
 def If(condition: Tensor, x1: Tensor, x2: Tensor, name: str = "If") -> Tensor:
@@ -1429,7 +1431,7 @@ def If(condition: Tensor, x1: Tensor, x2: Tensor, name: str = "If") -> Tensor:
     print("if_stmt sinifo: ", if_stmt.struct_info)
     print("if_stmt sinifo.shape: ", if_stmt.struct_info.shape)
 
-    return _wrap_nested(if_stmt, name)
+    return wrap_nested(if_stmt, name)
 
 
 def astype(x: Tensor, dtype: str, name: str = "astype") -> Tensor:
@@ -1592,7 +1594,7 @@ def softmax(x: Tensor, axis: int = -1, name: str = "softmax") -> Tensor:
     ----
     The input tensor is required to have float dtype
     """
-    return _wrap_nested(_op.nn.softmax(x._expr, axis), name)
+    return wrap_nested(_op.nn.softmax(x._expr, axis), name)
 
 
 def dropout(x: Tensor, p: float = 0.5, name: str = "dropout") -> Tensor:
@@ -1618,7 +1620,7 @@ def dropout(x: Tensor, p: float = 0.5, name: str = "dropout") -> Tensor:
         mask tensor (1.0 where element not dropped, 0.0 where dropped)
     """
     # droped_tup = _op.nn.dropout(x._expr, p)
-    # return _wrap_nested(rx.TupleGetItem(droped_tup, 1), name)
+    # return wrap_nested(rx.TupleGetItem(droped_tup, 1), name)
 
     return x
 
@@ -1640,7 +1642,7 @@ def sigmoid(x, name="sigmoid") -> Tensor:
     ----
     The input tensor is required to have float dtype
     """
-    return _wrap_nested(_op.sigmoid(x._expr), name)
+    return wrap_nested(_op.sigmoid(x._expr), name)
 
 
 def layer_norm(
@@ -2020,7 +2022,7 @@ def unbind(
     res_split = split(x, selections, axis)
     ret = []
     for i in range(selections):
-        ret.append(_wrap_nested(_op.squeeze(res_split[i]._expr, axis=[axis]), name))
+        ret.append(wrap_nested(_op.squeeze(res_split[i]._expr, axis=[axis]), name))
     return ret
 
 
@@ -2111,7 +2113,7 @@ def arange(
     """
     # TODO (yongwww): Update type annotation
 
-    return _wrap_nested(_op.arange(start, end, step, dtype), name)
+    return wrap_nested(_op.arange(start, end, step, dtype), name)
 
 
 def get_timestep_embedding(
