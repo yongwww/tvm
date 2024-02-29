@@ -602,6 +602,7 @@ def partition_for_cutlass(mod, annotate_codegen=True, use_flash_mqa=True):
 
     patterns = get_patterns_with_prefix("cutlass")
 
+    """
     matmul_names = ['cutlass.matmul']
     new_patterns = []
     for pat in patterns:
@@ -611,10 +612,11 @@ def partition_for_cutlass(mod, annotate_codegen=True, use_flash_mqa=True):
 
     print("The applied cutlass patterns: ", pat_names)
 
+    """
     return tvm.transform.Sequential(
         [
             transform.FuseOpsByPattern(
-                new_patterns, bind_constants=False, annotate_codegen=annotate_codegen
+                patterns, bind_constants=False, annotate_codegen=annotate_codegen
             ),
             annotate_workspace,
             transform.AllocateWorkspace(),

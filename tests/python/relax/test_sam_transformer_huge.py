@@ -93,12 +93,17 @@ def get_inputs(dtype=torch.float32, size="base"):
     # dtype = torch.float16
     # size = "huge"
     torch.set_default_dtype(dtype)
+
     # Define a function to recursively convert a tensor to float16
     def _convert_dtype(value, dtype=torch.float32):
         if isinstance(value, torch.Tensor):
             if value.dtype == dtype:
                 return value
-            if value.dtype == torch.float32 or value.dtype == torch.float64 or value.dtype == torch.float16:
+            if (
+                value.dtype == torch.float32
+                or value.dtype == torch.float64
+                or value.dtype == torch.float16
+            ):
                 return value.to(dtype)
             else:
                 return value
@@ -108,17 +113,21 @@ def get_inputs(dtype=torch.float32, size="base"):
             return [_convert_dtype(item, dtype) for item in value]
         else:
             return value
-    
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    processor = SamProcessor.from_pretrained("facebook/sam-vit-base" if size == "base" else "facebook/sam-vit-huge")
+    processor = SamProcessor.from_pretrained(
+        "facebook/sam-vit-base" if size == "base" else "facebook/sam-vit-huge"
+    )
 
     img_url = "https://huggingface.co/ybelkada/segment-anything/resolve/main/assets/car.png"
     raw_image = Image.open(requests.get(img_url, stream=True).raw).convert("RGB")
     input_points = [[[450, 600]]]  # 2D location of a window in the image
 
-    inputs = processor(raw_image, input_points=input_points, return_tensors="pt", torch_dtype=dtype).to(device)
-    
+    inputs = processor(
+        raw_image, input_points=input_points, return_tensors="pt", torch_dtype=dtype
+    ).to(device)
+
     inputs = BatchFeature({key: _convert_dtype(value, dtype) for key, value in inputs.items()})
 
     return inputs
@@ -129,10 +138,12 @@ def get_transformers_torch_sam(size="base", torch_dtype=torch.float32):
     torch.set_default_dtype(torch_dtype)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if size == "base":
-        tmp_sam = PTSamModel.from_pretrained("facebook/sam-vit-base", torch_dtype=torch_dtype) #.to(device)
+        tmp_sam = PTSamModel.from_pretrained(
+            "facebook/sam-vit-base", torch_dtype=torch_dtype
+        )  # .to(device)
     else:
         tmp_sam = PTSamModel.from_pretrained("facebook/sam-vit-huge", torch_dtype=torch_dtype)
-    
+
     config = tmp_sam.config
 
     return PTSamModel(config).to(device)
@@ -145,7 +156,6 @@ def test_transformers_sam(pt_sam_model=None, torch_dtype=torch.float32, benchmar
         outputs = pt_sam_model(**inputs)
         print("Hugging Face Transformers SAM inference output: ", outputs)
         return outputs
-
 
     # Warmup with 5 runs
     num_warms = 5
@@ -188,7 +198,7 @@ def test_tvm_sam(pt_sam_model=None, dtype="float32", benchmark=True):
     ir_mod, _ = relax_model.export_tvm(spec=mod_spec, debug=True)
 
     mod = tvm.ir.IRModule()
-    mod["main"] = ir_mod["forward"]
+    mod["main"] = ir_mod["forward"].with_attrs({"global_symbol": "main"})
     mod["get_prompt_embeddings"] = ir_mod["get_prompt_embeddings"]
     mod["get_image_embeddings"] = ir_mod["get_image_embeddings"]
 
@@ -267,18 +277,15 @@ def test_tvm_sam(pt_sam_model=None, dtype="float32", benchmark=True):
         # measure perf
         start_time = time.time()
         for i in range(iterations):
-            vm[entry_name](*input_args) 
+            vm[entry_name](*input_args)
         duration = (time.time() - start_time) * 1000 / iterations
         print("Relax SAM inference performance: {} ms".format(duration))
-
-
 
     out_np = _to_numpy(out_nd)
 
     # print("inference result numpy[0][0]: ", out_np[0][0])
     print("Relax SAM inference output: ", _to_numpy(out_nd))
     return out_nd[0]
-    
 
 
 def test_tvm_profile():
@@ -362,32 +369,31 @@ def test_tvm_profile():
     print("Profiling report: \n", report)
 
 
-
 if __name__ == "__main__":
     # Test config
-    dtype, size = "float16", "base" # "huge"
-    benchmark = False
-    
-    # Get the torch SAM 
+    dtype, size = "float16", "huge"  # "base"  # "huge"
+    benchmark = True
+
+    # Get the torch SAM
     torch_dtype = torch.float16 if dtype == "float16" else torch.float32
     pt_sam_model = get_transformers_torch_sam(size, torch_dtype=torch_dtype)
     from transformers.models.sam.modeling_sam import SamImageSegmentationOutput
 
     # run with PyTorch
     pt_out = test_transformers_sam(pt_sam_model, torch_dtype=torch_dtype, benchmark=benchmark)
-    
+
     # convert to relax and run on relax vm
     tvm_out = test_tvm_sam(pt_sam_model, dtype=dtype, benchmark=benchmark)
 
     # Verify correctness
-    tol=1e-3
+    tol = 1e-3
     if isinstance(tvm_out, tvm.container.Array):
         for i, (o1, o2) in enumerate(zip(tvm_out, pt_out)):
             print("Comparing output ", i)
-            tvm.testing.assert_allclose(o1.numpy(), getattr(pt_out, o2, None).cpu().detach().numpy(), rtol=tol, atol=tol)
+            tvm.testing.assert_allclose(
+                o1.numpy(), getattr(pt_out, o2, None).cpu().detach().numpy(), rtol=tol, atol=tol
+            )
     else:
-        tvm.testing.assert_allclose(
-            tvm_out.numpy(), pt_out.cpu().numpy(), rtol=tol, atol=tol
-        )
+        tvm.testing.assert_allclose(tvm_out.numpy(), pt_out.cpu().numpy(), rtol=tol, atol=tol)
 
     print("Inference results match!")

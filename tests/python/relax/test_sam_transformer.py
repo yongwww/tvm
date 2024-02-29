@@ -190,7 +190,8 @@ def test_tvm_sam():
 
     # target, dev = "llvm", tvm.cpu()
     # target = tvm.target.Target("nvidia/nvidia-a100")  # tvm.target.Target("cuda", host="llvm")
-    target = tvm.target.Target("cuda", host="llvm")
+    # target = tvm.target.Target("cuda", host="llvm")
+    target = tvm.target.Target("nvidia/nvidia-a10g")
     dev = tvm.gpu()
 
     # apply passes
