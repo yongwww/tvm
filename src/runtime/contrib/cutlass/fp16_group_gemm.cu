@@ -43,6 +43,7 @@ void tvm_cutlass_group_gemm_sm90(NDArray x, NDArray weight, NDArray indptr, NDAr
   // Workspace is used for storing device-side group gemm arguments and cutlass internal workspace.
   // Recommened size is 4MB.
   auto func = tvm::runtime::Registry::Get("runtime.get_cuda_stream");
+  cudaStream_t stream = static_cast<cudaStream_t>((*func)().operator void*());
   ICHECK(func != nullptr);
   CHECK_EQ(x->ndim, 2);
   CHECK_EQ(weight->ndim, 3);
@@ -52,9 +53,22 @@ void tvm_cutlass_group_gemm_sm90(NDArray x, NDArray weight, NDArray indptr, NDAr
   int num_groups = weight->shape[0];
   int n = weight->shape[1];
   int k = weight->shape[2];
+
+  if (x->shape[0] <= 128)
+  {
+    // For smaller problems (e.g. LLM decoding), we found the A100 kernel to be faster
+    auto func_1 = tvm::runtime::Registry::Get("fastertransformer.moe_gemm_fp16_fp16");
+    (*func_1)(x, weight, indptr, x->shape[0], n, k, num_groups, out); 
+   // fastertransformer::moe_gemm_bias_act<half, half>(
+   //     reinterpret_cast<half*>(x->data), reinterpret_cast<half*>(weight->data), nullptr, nullptr,
+    //    reinterpret_cast<half*>(out->data),
+     //   reinterpret_cast<int64_t*>(indptr->data), x->shape[0], n, k, num_groups,
+      //  std::nullopt, stream);
+      return;
+  }
+
   float alpha = 1.0f;
   float beta = 0.0f;
-  cudaStream_t stream = static_cast<cudaStream_t>((*func)().operator void*());
   cutlass_group_gemm(static_cast<ElementA*>(x->data), static_cast<ElementB*>(weight->data),
                      static_cast<int64_t*>(indptr->data), static_cast<uint8_t*>(workspace->data),
                      workspace->shape[0], n, k, num_groups, alpha, beta,
