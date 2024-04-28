@@ -177,6 +177,7 @@ def collect_symbolic_var_from_prelude(
 def collect_symbolic_var_from_params(self: Parser, node: doc.FunctionDef) -> None:
     # Collect symbolic vars from parameters
     symbolic_vars = {}
+    symbolic_size_vars = set()
     for arg in node.args.args:
         if arg.annotation is None:
             self.report_error(arg, "Type annotation is required for function parameters.")
@@ -186,12 +187,20 @@ def collect_symbolic_var_from_params(self: Parser, node: doc.FunctionDef) -> Non
             if var_name not in symbolic_vars:
                 symbolic_vars[var_name] = tir.Var(var_name, "int64")
 
+        symbolic_size_vars.update(param_sinfo_proxy.get_symbolic_size_vars())
+
+    assert len(symbolic_size_vars - symbolic_vars.keys()) == 0, (
+        "Internal error: "
+        "All collected tir.SizeVar names must also appear in the list of tir.Var names"
+    )
+
     # Update symbolic vars based on
     symbolic_vars = collect_symbolic_var_from_prelude(self, node, symbolic_vars)
 
     # Define symbolic vars to the current var_table frame
     for var_name, var in symbolic_vars.items():
-        self.var_table.add(var_name, var, allow_shadowing=False)
+        var_cls = tir.SizeVar if var_name in symbolic_size_vars else tir.Var
+        self.var_table.add(var_name, var_cls(var_name, "int64"), allow_shadowing=False)
 
 
 @dispatch.register(token="relax", type_name="FunctionDef")
