@@ -17,7 +17,6 @@ from tvm.script import ir as I, relax as R, tir as T
 def compile(mod
 ) -> relax.VirtualMachine:
     # compile the model
-    mod = relax.transform.RealizeVDevice()(mod)
     mod = relax.transform.LegalizeOps()(mod)
     tgt = tvm.target.Target("nvidia/nvidia-h100")
     with tgt:
