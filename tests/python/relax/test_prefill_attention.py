@@ -18,19 +18,20 @@ from mlc_llm.compiler_pass import pipeline
 from mlc_llm.nn.kv_cache import PagedKVCache, RopeMode
 
 """
-paged_kv_cache: R.Object
-t0: R.Tensor((seq_len, 48/tp, 128), dtype="float16")
-a0 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (paged_kv_cache, R.prim_value(0), R.prim_value(T.float32(1.0)), t0), out_sinfo=R.Tensor((seq_len, 32/tp, 128), dtype="float16"))
-a1 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (paged_kv_cache, R.prim_value(1), R.prim_value(T.float32(1.0)), t0), out_sinfo=R.Tensor((seq_len, 32/tp, 128), dtype="float16"))
-a2 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (paged_kv_cache, R.prim_value(2), R.prim_value(T.float32(1.0)), t0), out_sinfo=R.Tensor((seq_len, 32/tp, 128), dtype="float16"))
-...
-a31 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (paged_kv_cache, R.prim_value(31), R.prim_value(T.float32(1.0)), t0), out_sinfo=R.Tensor((seq_len, 32/tp, 128), dtype="float16"))
+############################################################################################################
+    paged_kv_cache: R.Object
+    t0: R.Tensor((seq_len, 48/tp, 128), dtype="float16")
+    a0 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (paged_kv_cache, R.prim_value(0), R.prim_value(T.float32(1.0)), t0), out_sinfo=R.Tensor((seq_len, 32/tp, 128), dtype="float16"))
+    a1 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (paged_kv_cache, R.prim_value(1), R.prim_value(T.float32(1.0)), t0), out_sinfo=R.Tensor((seq_len, 32/tp, 128), dtype="float16"))
+    a2 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (paged_kv_cache, R.prim_value(2), R.prim_value(T.float32(1.0)), t0), out_sinfo=R.Tensor((seq_len, 32/tp, 128), dtype="float16"))
+    # repeat the pattern above for num_layers times
+    a31 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (paged_kv_cache, R.prim_value(31), R.prim_value(T.float32(1.0)), t0), out_sinfo=R.Tensor((seq_len, 32/tp, 128), dtype="float16"))
+############################################################################################################
 """
 
-##########
-reserved_nseq = 32
-maximum_total_seq_length = 2048
-prefill_chunk_size = 512
+batch = 256
+maximum_total_seq_length = 32768 # 2048 # 128k
+prefill_chunk_size = 32768  # 16384 # 8192 # 16384
 page_size = 16
 num_layers =32
 num_qo_heads = 32
@@ -69,7 +70,12 @@ fsplit_rotary = None
 fcopy_single_page = None
 fcopy_cache = None
 
+# shards
+tensor_parallel_shards = 1
+num_qo_heads //= tensor_parallel_shards
+num_kv_heads //= tensor_parallel_shards
 
+# TOP
 @T.prim_func
 def kv_cache_transpose_append(
     var_pages: T.handle,
@@ -348,7 +354,7 @@ def create_kv_cache(rope_mode):
     cache = fcreate(
         tvm.runtime.ShapeTuple(
             [
-                reserved_nseq,
+                batch,
                 maximum_total_seq_length,
                 prefill_chunk_size,
                 page_size,
@@ -365,9 +371,9 @@ def create_kv_cache(rope_mode):
         tvm.nd.empty((), dtype, device=device),
         ftranspose_append,
         fattention_prefill,
-        fattention_decode,
+        None, # fattention_decode,
         fattention_prefill,
-        fattention_decode,
+        None, # fattention_decode,
         fattention_prefill_ragged,
         fattention_prefill_ragged_begin_forward,
         fattention_prefill_ragged_end_forward,
@@ -375,7 +381,7 @@ def create_kv_cache(rope_mode):
         fattention_prefill_end_forward,
         fattention_decode_begin_forward,
         fattention_decode_end_forward,
-        fattention_merge_state,
+        None, # fattention_merge_state,
         fsplit_rotary,
         fcopy_single_page,
         fcopy_cache,
@@ -384,57 +390,150 @@ def create_kv_cache(rope_mode):
         None,
     )
     return cache
-##########
 
 
-def test_nn_module_paged_kv_cache():
-    # fmt: off
+def test_prefill_attention():
     @I.ir_module
     class Module:
         @R.function
-        def create_paged_kv_cache(
-            max_batch_size: R.Shape(["max_batch_size_1"]),  # type: ignore
-            max_total_seq_len: R.Shape(["max_total_seq_len_1"]),  # type: ignore
-            prefill_chunk_size: R.Shape(["prefill_chunk_size_1"]),  # type: ignore
-            page_size: R.Shape(["page_size_1"]),  # type: ignore
-            support_sliding_window: R.Shape(["support_sliding_window_1"]),  # type: ignore
-        ) -> R.Object:
-            max_batch_size_1 = T.int64()
-            max_total_seq_len_1 = T.int64()
-            prefill_chunk_size_1 = T.int64()
-            page_size_1 = T.int64()
-            support_sliding_window_1 = T.int64()
+        def create_paged_kv_cache(max_batch_size_1: R.Shape(["max_batch_size"]), max_total_seq_len_1: R.Shape(["max_total_seq_len"]), prefill_chunk_size_1: R.Shape(["prefill_chunk_size"]), page_size_1: R.Shape(["page_size"]), support_sliding_window_1: R.Shape(["support_sliding_window"])) -> R.Object:
+            max_batch_size = T.int64()
+            max_total_seq_len = T.int64()
+            prefill_chunk_size = T.int64()
+            page_size = T.int64()
+            support_sliding_window = T.int64()
             R.func_attr({"num_input": 5})
-
-            #$ paged_kv_cache: R.Object = R.call_pure_packed("mlc.create_paged_kv_cache_generic", R.shape([max_batch_size, max_total_seq_len, prefill_chunk_size, page_size, support_sliding_window]         ), R.shape([0, 32]), R.prim_value(32), R.prim_value(32), R.prim_value(8), R.prim_value(128), R.prim_value(1), R.prim_value(1), R.prim_value(T.float32(500000.0)), R.str("{}"), R.prim_value(0), R.prim_value(128), R.dtype("float16"), sinfo_args=(R.Object,))
-
             with R.dataflow():
-                paged_kv_cache: R.Object = R.call_pure_packed("mlc.create_paged_kv_cache_generic", R.shape([max_batch_size_1, max_total_seq_len_1, prefill_chunk_size_1, page_size_1, support_sliding_window_1]), R.shape([0, 32]), R.prim_value(32), R.prim_value(32), R.prim_value(32), R.prim_value(128), R.prim_value(1), R.prim_value(1), R.prim_value(10000),  R.str("{}"), R.prim_value(0), R.prim_value(128), R.dtype("float16"), sinfo_args=(R.Object,))
-                gv1: R.Object = paged_kv_cache
-                R.output(gv1)
-            return gv1
+                paged_kv_cache: R.Object = R.call_pure_packed("mlc.create_paged_kv_cache_generic", R.shape([max_batch_size, max_total_seq_len, prefill_chunk_size, page_size, support_sliding_window]), R.shape([0, 32]), R.prim_value(32), R.prim_value(32), R.prim_value(8), R.prim_value(128), R.prim_value(1), R.prim_value(1), R.prim_value(T.float32(500000.0)), R.str("{}"), R.prim_value(0), R.prim_value(128), R.dtype("float16"), sinfo_args=(R.Object,))
+                gv13: R.Object = paged_kv_cache
+                R.output(gv13)
+            return gv13
 
         @R.function
-        def forward(
-            cache: R.Object, qkv: R.Tensor((1, 100, 96, 128), dtype="float16")  # type: ignore
-        ) -> R.Tensor((1, 100, 32, 128), dtype="float16"):  # type: ignore
+        def forward(cache: R.Object, x: R.Shape(["tp"]), qkv: R.Tensor(("seq_len", "48//tp", 128), dtype="float16")) -> R.Tensor(("seq_len", "32//tp", 128), dtype="float16"):
+            seq_len = T.int64()
+            tp = T.int64()
             R.func_attr({"num_input": 2})
             with R.dataflow():
-                reshape: R.Tensor((100, 96, 128), dtype="float16") = R.reshape(  # type: ignore
-                    qkv, R.shape([100, 96, 128])
-                )
-                lv = R.call_dps_packed(
-                    "vm.builtin.attention_kv_cache_attention_with_fused_qkv",
-                    (cache, R.prim_value(0), R.prim_value(T.float32(1)), reshape),
-                    out_sinfo=R.Tensor((100, 32, 128), dtype="float16"),
-                )
-                reshape1: R.Tensor((1, 100, 32, 128), dtype="float16") = R.reshape(  # type: ignore
-                    lv, R.shape([1, 100, 32, 128])
-                )
-                gv: R.Tensor((1, 100, 32, 128), dtype="float16") = reshape1  # type: ignore
+                lv0 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(0), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv1 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(1), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv2 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(2), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv3 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(3), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv4 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(4), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv5 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(5), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv6 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(6), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv7 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(7), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv8 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(8), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv9 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(9), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv10 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(10), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv11 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(11), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv12 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(12), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv13 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(13), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv14 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(14), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv15 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(15), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv16 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(16), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv17 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(17), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv18 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(18), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv19 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(19), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv20 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(20), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv21 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(21), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv22 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(22), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv23 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(23), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv24 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(24), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv25 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(25), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv26 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(26), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv27 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(27), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv28 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(28), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv29 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(29), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv30 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(30), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                lv31 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(31), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+
+                # lv129 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (paged_kv_cache, R.prim_value(0), R.prim_value(T.float32(1.0)), reshape513), out_sinfo=R.Tensor((seq_len, 32//tp, 128), dtype="float16"))
+                gv: R.Tensor((seq_len, 32//tp, 128), dtype="float16") = lv0
                 R.output(gv)
             return gv
-    # fmt: on
+
+    mod = Module
+    tgt = tvm.target.Target("nvidia/nvidia-h100")
+    pipeline=relax.get_pipeline("mlc_llm", target=tgt, flashinfer=True, cublas_gemm=True, faster_transformer=True)
+    dev = tvm.gpu()
+    with tgt:
+        mod = pipeline(mod)
+    mod['forward'].show()
+    # print(mod.script())
+    ex = relax.build(mod, tgt)
+
+    # print(f"ex.entry_func: {ex.entry_func}")
+
+    # print(ex.as_text())
+    vm = relax.VirtualMachine(ex, dev)
+
+    # inference
+    max_batch_size = tvm.nd.array(1, dev)
+
+    # fsplit_rotary = vm['fused_rope']()
+    seq_len = 300
+    set_global_func()
+    cache = create_kv_cache(RopeMode.NORMAL)
+    operation_seq = [[(0, 6)], [(1, 8)], [(2, 11)], [(3, 16)], [(4, 19), (5, 20)]]
+    operation_seq = [[(0, seq_len)],]
+    seq_ids = []
+    append_lengths = []
+    for batch in operation_seq:
+        for seq_id, append_length in batch:
+            seq_ids.append(seq_id)
+            append_lengths.append(append_length)
+            fadd_sequence(cache, seq_id)
+            # vm['add_sequence'](cache, seq_id)
+    print(f"yongwww seq_ids = {seq_ids}, append_lengths = {append_lengths}")
+    fbegin_forward(cache, ShapeTuple(seq_ids), ShapeTuple(append_lengths))
+    # cache = vm['create_flashinfer_paged_kv_cache'](max_batch_size_=7, max_total_seq_len_=100, prefill_chunk_size_=10, page_size_=10, support_sliding_window_=1)
+    iterations = 10000
+    warmup = 100
+    nd_qkv = tvm.nd.array(np.random.rand(seq_len, 48//tensor_parallel_shards, 128).astype(np.float16), dev)
+
+    # collect nsys
+    return_nsys = False
+    if return_nsys:
+        # warmup
+        res = vm['forward'](cache, nd_qkv)
+        import cuda
+        import cuda.cudart
+        # start profiling
+        cuda.cudart.cudaProfilerStart()
+        res = vm['forward'](cache, nd_qkv)
+        cuda.cudart.cudaProfilerStop()
+        print("profiled")
+        return
+
+    # with relax vm
+    for _ in range(warmup):
+       res = vm['forward'](cache, tvm.runtime.ShapeTuple([tensor_parallel_shards]), nd_qkv)
+
+    start_time = time.time_ns()
+    for _ in range(iterations):
+        res = vm['forward'](cache, tvm.runtime.ShapeTuple([tensor_parallel_shards]), nd_qkv)
+    dur = time.time_ns() - start_time
+    print(f"avg time of vm forward: {dur/iterations/1e3} us with seq_len = {seq_len}, tp = {tensor_parallel_shards}")
+    fend_forward(cache)
+    return
+
+    # single vm buildtin call
+    outputs = tvm.nd.empty((seq_len, 32, 128), dtype, device=dev)
+    for _ in range(warmup):
+       fattention_with_fuse_qkv(cache, 0, 1.0, nd_qkv, outputs)
+
+    start_time = time.time_ns()
+    for _ in range(iterations):
+        fattention_with_fuse_qkv(cache, 0, 1.0, nd_qkv, outputs)
+    dur = time.time_ns() - start_time
+    print(f"avg time of fattention_with_fuse_qkv: {dur/iterations/1e3} us")
+
+    # res = vm['forward'](cache, tvm.nd.array(np.random.rand(1, 100, 48, 128).astype(np.float16), dev))
+    fend_forward(cache)
+
+
+def test_nn_module_paged_kv_cache():
 
     class PagedKVCacheTest(modules.Module):
         def forward(
@@ -463,7 +562,6 @@ def test_nn_module_paged_kv_cache():
                 num_key_value_heads=32,
                 head_dim=128,
                 rope_mode=RopeMode.NORMAL,
-                # rope_mode=RopeMode.INLINE,
                 rope_scale=1,
                 rope_theta=10000,
                 rotary_dim=128,
@@ -474,7 +572,7 @@ def test_nn_module_paged_kv_cache():
         spec={
             "forward": {
                 "cache": spec.Object(object_type=PagedKVCache),
-                "qkv": spec.Tensor((1, 100, 96, 128), "float16"),
+                "qkv": spec.Tensor((1, 100, 48, 128), "float16"),
             },
             "create_paged_kv_cache": {
                 "max_batch_size": int,
@@ -492,14 +590,6 @@ def test_nn_module_paged_kv_cache():
     mod.show()
     tgt = tvm.target.Target("nvidia/nvidia-h100")
     dev = tvm.gpu()
-    """
-    mod = relax.transform.LegalizeOps()(mod)
-    with tgt:
-        mod = tvm.tir.transform.DefaultGPUSchedule()(mod)
-    ex = relax.build(mod, tgt)
-    print(ex.as_text())
-    vm = relax.VirtualMachine(ex, dev)
-    """
 
     pipeline=relax.get_pipeline("mlc_llm", target=tgt, flashinfer=True, cublas_gemm=True, faster_transformer=True)
     with tgt:
@@ -507,100 +597,17 @@ def test_nn_module_paged_kv_cache():
     ex = relax.build(mod, tgt)
 
     print(ex.as_text())
-    vm = relax.VirtualMachine(ex, dev)
-
-    # inference
-    max_batch_size = tvm.nd.array(1, dev)
-
-    # cache = vm['create_flashinfer_paged_kv_cache'](tvm.runtime.ShapeTuple([10]), tvm.runtime.ShapeTuple([2048]), tvm.runtime.ShapeTuple([512]), tvm.runtime.ShapeTuple([16]), tvm.runtime.ShapeTuple([1]))
-    # cache = vm['create_flashinfer_paged_kv_cache'](max_batch_size_=7, max_total_seq_len_=100, prefill_chunk_size_=10, page_size_=10, support_sliding_window_=1)
-
-    cache = vm['create_tir_paged_kv_cache'](tvm.runtime.ShapeTuple([10]), tvm.runtime.ShapeTuple([2048]), tvm.runtime.ShapeTuple([512]), tvm.runtime.ShapeTuple([16]), tvm.runtime.ShapeTuple([1]))
-    res = vm['forward'](cache, tvm.nd.array(np.random.rand(1, 100, 96, 128).astype(np.float16), dev))
-
-
-def test_prefill_attention():
-    @I.ir_module
-    class Module:
-        @R.function
-        def create_paged_kv_cache(max_batch_size_1: R.Shape(["max_batch_size"]), max_total_seq_len_1: R.Shape(["max_total_seq_len"]), prefill_chunk_size_1: R.Shape(["prefill_chunk_size"]), page_size_1: R.Shape(["page_size"]), support_sliding_window_1: R.Shape(["support_sliding_window"])) -> R.Object:
-            max_batch_size = T.int64()
-            max_total_seq_len = T.int64()
-            prefill_chunk_size = T.int64()
-            page_size = T.int64()
-            support_sliding_window = T.int64()
-            R.func_attr({"num_input": 5})
-            with R.dataflow():
-                paged_kv_cache: R.Object = R.call_pure_packed("mlc.create_paged_kv_cache_generic", R.shape([max_batch_size, max_total_seq_len, prefill_chunk_size, page_size, support_sliding_window]), R.shape([0, 32]), R.prim_value(32), R.prim_value(32), R.prim_value(8), R.prim_value(128), R.prim_value(1), R.prim_value(1), R.prim_value(T.float32(500000.0)), R.str("{}"), R.prim_value(0), R.prim_value(128), R.dtype("float16"), sinfo_args=(R.Object,))
-                gv13: R.Object = paged_kv_cache
-                R.output(gv13)
-            return gv13
-        @R.function
-        def forward(cache: R.Object, qkv: R.Tensor(("seq_len", 48, 128), dtype="float16")) -> R.Tensor(("seq_len", 32, 128), dtype="float16"):
-            seq_len = T.int64()
-            R.func_attr({"num_input": 2})
-            with R.dataflow():
-                lv0 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(0), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv1 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(1), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv2 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(2), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv3 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(3), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv4 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(4), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv5 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(5), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv6 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(6), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv7 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(7), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv8 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(8), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv9 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(9), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv10 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(10), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv11 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(11), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv12 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(12), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv13 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(13), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv14 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(14), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv15 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(15), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv16 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(16), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv17 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(17), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv18 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(18), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv19 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(19), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv20 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(20), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv21 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(21), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv22 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(22), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv23 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(23), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv24 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(24), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv25 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(25), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv26 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(26), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv27 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(27), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv28 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(28), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv29 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(29), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv30 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(30), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                lv31 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (cache, R.prim_value(31), R.prim_value(T.float32(1.0)), qkv), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-
-                # lv129 = R.call_dps_packed("vm.builtin.attention_kv_cache_attention_with_fused_qkv", (paged_kv_cache, R.prim_value(0), R.prim_value(T.float32(1.0)), reshape513), out_sinfo=R.Tensor((seq_len, 32, 128), dtype="float16"))
-                gv: R.Tensor((seq_len, 32, 128), dtype="float16") = lv0
-                R.output(gv)
-            return gv
-
-    mod = Module
-    tgt = tvm.target.Target("nvidia/nvidia-h100")
-    pipeline=relax.get_pipeline("mlc_llm", target=tgt, flashinfer=True, cublas_gemm=True, faster_transformer=True)
-    dev = tvm.gpu()
-    with tgt:
-        mod = pipeline(mod)
-    mod['forward'].show()
-    # print(mod.script())
-    ex = relax.build(mod, tgt)
-
-    # print(f"ex.entry_func: {ex.entry_func}")
-
-    # print(ex.as_text())
     vm = relax.VirtualMachine(ex, dev)
 
     # inference
     max_batch_size = tvm.nd.array(1, dev)
 
     # fsplit_rotary = vm['fused_rope']()
+    seq_len = 100
     set_global_func()
     cache = create_kv_cache(RopeMode.NORMAL)
-    # operation_seq = [[(0, 6)], [(1, 8)], [(2, 11)], [(3, 16)], [(4, 19), (5, 20)]]
-    operation_seq = [[(100, 100)],]
+    operation_seq = [[(0, 6)], [(1, 8)], [(2, 11)], [(3, 16)], [(4, 19), (5, 20)]]
+    operation_seq = [[(0, seq_len)],]
     seq_ids = []
     append_lengths = []
     for batch in operation_seq:
@@ -609,30 +616,12 @@ def test_prefill_attention():
             append_lengths.append(append_length)
             fadd_sequence(cache, seq_id)
             # vm['add_sequence'](cache, seq_id)
+    print(f"yongwww seq_ids = {seq_ids}, append_lengths = {append_lengths}")
     fbegin_forward(cache, ShapeTuple(seq_ids), ShapeTuple(append_lengths))
-    # print(f"yongwww cache = {cache}, type = {type(cache)}") yongwww cache = relax.vm.PagedAttentionKVCache(0x7db2cc8), type = <class 'tvm.runtime.object.Object'>
-    # return
-
-    #cache = vm['create_flashinfer_paged_kv_cache'](tvm.runtime.ShapeTuple([10]), tvm.runtime.ShapeTuple([2048]), tvm.runtime.ShapeTuple([512]), tvm.runtime.ShapeTuple([32]), tvm.runtime.ShapeTuple([1]))
-
-    # print(f"cache = {cache}")
     # cache = vm['create_flashinfer_paged_kv_cache'](max_batch_size_=7, max_total_seq_len_=100, prefill_chunk_size_=10, page_size_=10, support_sliding_window_=1)
-    # cache = vm['create_tir_paged_kv_cache'](tvm.runtime.ShapeTuple([10]), tvm.runtime.ShapeTuple([2048]), tvm.runtime.ShapeTuple([512]), tvm.runtime.ShapeTuple([16]), tvm.runtime.ShapeTuple([1]))
     iterations = 10000
     warmup = 100
-    nd_qkv = tvm.nd.array(np.random.rand(3000, 48, 128).astype(np.float16), dev)
-
-    # collect nsys
-    return_nsys = False
-    if return_nsys:
-        import cuda
-        import cuda.cudart
-        # start profiling
-        cuda.cudart.cudaProfilerStart()
-        res = vm['forward'](cache, nd_qkv)
-        cuda.cudart.cudaProfilerStop()
-        print("profiled")
-        return
+    nd_qkv = tvm.nd.array(np.random.rand(1, seq_len, 48//tensor_parallel_shards, 128).astype(np.float16), dev)
 
     # with relax vm
     for _ in range(warmup):
@@ -642,21 +631,10 @@ def test_prefill_attention():
     for _ in range(iterations):
         res = vm['forward'](cache, nd_qkv)
     dur = time.time_ns() - start_time
-    print(f"avg time of vm forward: {dur/iterations/1e3} us")
-    return
+    print(f"avg time of vm forward: {dur/iterations/1e3} us with seq_len = {seq_len}, tp = {tensor_parallel_shards}")
+    fend_forward(cache)
 
-    # single vm buildtin call
-    outputs = tvm.nd.empty((3000, 32, 128), dtype, device=dev)
-    for _ in range(warmup):
-       fattention_with_fuse_qkv(cache, 0, 1.0, nd_qkv, outputs)
 
-    start_time = time.time_ns()
-    for _ in range(iterations):
-        fattention_with_fuse_qkv(cache, 0, 1.0, nd_qkv, outputs)
-    dur = time.time_ns() - start_time
-    print(f"avg time of fattention_with_fuse_qkv: {dur/iterations/1e3} us")
-
-    # res = vm['forward'](cache, tvm.nd.array(np.random.rand(1, 100, 48, 128).astype(np.float16), dev))
 
 
 def bench_flashinfer_batch_prefill_with_paged_kv_cache(
@@ -727,7 +705,8 @@ if __name__ == "__main__":
     parser.add_argument("--seq_len", type=int, default=300, help="The sequence length")
 
     args = parser.parse_args()
-    test_prefill_attention()
+    # test_prefill_attention()
+    test_nn_module_paged_kv_cache()
 
     # bench_flashinfer_batch_prefill_with_paged_kv_cache(
     #    batch_size=args.batch_size,
