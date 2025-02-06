@@ -14,6 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+import enum
 import itertools
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -25,18 +26,17 @@ import tvm
 import tvm.testing
 from tvm import dlight as dl
 from tvm.relax.frontend.nn.llm.kv_cache import (
-    RopeMode,
-    _attention_decode,
-    _attention_prefill,
-    _attention_prefill_ragged,
-    _compact_kv_copy,
-    _copy_single_page,
+    _attention_decode_cpu,
+    _attention_prefill_cpu,
+    _attention_prefill_ragged_cpu,
+    _compact_kv_copy_cpu,
+    _copy_single_page_cpu,
     _kv_cache_debug_get_kv,
     _kv_cache_transpose_append,
-    _merge_state_inplace,
+    _merge_state_inplace_cpu,
     llama_rope_with_position_map,
-    tree_attn,
-    tree_attn_with_paged_kv_cache,
+    tree_attn_cpu,
+    tree_attn_with_paged_kv_cache_cpu,
 )
 from tvm.runtime import ShapeTuple
 
@@ -52,7 +52,7 @@ rope_scale = 1.0
 rope_theta = 1e4
 rope_scaling = {}
 dtype = None
-device = tvm.cuda()
+device = tvm.cpu()
 
 fclear = None
 fadd_sequence = None
@@ -116,25 +116,21 @@ def set_global_func(head_dim, dtype):
     for tir_func in [
         _kv_cache_transpose_append(num_kv_heads, head_dim, dtype),
         _kv_cache_debug_get_kv(num_layers, num_kv_heads, head_dim, dtype),
-        _attention_prefill(
-            num_kv_heads, num_qo_heads, head_dim, dtype, False, rope_scaling, target
+        _attention_prefill_cpu(num_kv_heads, num_qo_heads, head_dim, dtype, False, rope_scaling),
+        _attention_decode_cpu(num_kv_heads, num_qo_heads, head_dim, dtype, False, rope_scaling),
+        _attention_prefill_cpu(num_kv_heads, num_qo_heads, head_dim, dtype, True, rope_scaling),
+        _attention_decode_cpu(num_kv_heads, num_qo_heads, head_dim, dtype, True, rope_scaling),
+        _attention_prefill_ragged_cpu(num_kv_heads, num_qo_heads, head_dim, dtype, rope_scaling),
+        tree_attn_cpu(num_kv_heads, num_qo_heads, head_dim, dtype, rope_scaling),
+        tree_attn_with_paged_kv_cache_cpu(
+            num_kv_heads, num_qo_heads, head_dim, dtype, rope_scaling
         ),
-        _attention_decode(num_kv_heads, num_qo_heads, head_dim, dtype, False, rope_scaling, target),
-        _attention_prefill(num_kv_heads, num_qo_heads, head_dim, dtype, True, rope_scaling, target),
-        _attention_decode(num_kv_heads, num_qo_heads, head_dim, dtype, True, rope_scaling, target),
-        _attention_prefill_ragged(
-            num_kv_heads, num_qo_heads, head_dim, dtype, rope_scaling, target
-        ),
-        tree_attn(num_kv_heads, num_qo_heads, head_dim, dtype, rope_scaling, target),
-        tree_attn_with_paged_kv_cache(
-            num_kv_heads, num_qo_heads, head_dim, dtype, rope_scaling, target
-        ),
-        _merge_state_inplace(num_qo_heads, head_dim, dtype, target),
+        _merge_state_inplace_cpu(dtype),
         llama_rope_with_position_map(
             rope_theta, rope_scale, head_dim, num_qo_heads, num_kv_heads, dtype, rope_scaling
         ),
-        _copy_single_page(num_kv_heads, page_size, head_dim, dtype, target),
-        _compact_kv_copy(num_kv_heads, head_dim, dtype, target),
+        _copy_single_page_cpu(num_kv_heads, page_size, head_dim, dtype),
+        _compact_kv_copy_cpu(num_kv_heads, head_dim, dtype),
     ]:
         mod = tvm.IRModule({"main": tir_func})
         with target:
@@ -196,6 +192,18 @@ def create_kv_cache(head_dim, dtype, rope_mode, support_sliding_window):
         False,
     )
     return cache
+
+
+class RopeMode(enum.IntEnum):
+    """The RoPE mode of the Paged KV cache.
+    If it is none, the KV cache will not apply RoPE to q and k.
+    If it is normal, RoPE will be applied to k before adding k to cache.
+    Otherwise, RoPE will be applied to q/k in attention kernel on-the-fly.
+    """
+
+    NONE = 0
+    NORMAL = 1
+    INLINE = 2
 
 
 @pytest.fixture(
@@ -294,6 +302,7 @@ def apply_attention(
 
     flattened_token_tree_parent_ptr = None
     token_tree_node_depths_list: List[Optional[List[int]]] = [None for _ in batch]
+
     if token_tree_parent_ptr_list:
         assert len(token_tree_node_depths_list) == len(seq_ids)
         if accepted_leaf_indices is not None:
@@ -526,8 +535,6 @@ def apply_attention(
     verify_cached_kv(kv_cache, seq_ids, cached_k, cached_v)
 
 
-@tvm.testing.requires_gpu
-@tvm.testing.requires_cuda
 def test_paged_attention_kv_cache_prefill_and_decode(kv_cache_and_config):
     kv_cache, rope_mode, support_sliding_window = kv_cache_and_config
     if support_sliding_window and rope_mode == RopeMode.NORMAL:
@@ -551,8 +558,6 @@ def test_paged_attention_kv_cache_prefill_and_decode(kv_cache_and_config):
         apply_attention(kv_cache, rope_mode, batch, cached_k, cached_v)
 
 
-@tvm.testing.requires_gpu
-@tvm.testing.requires_cuda
 def test_paged_attention_kv_cache_remove_sequence(kv_cache_and_config):
     kv_cache, rope_mode, support_sliding_window = kv_cache_and_config
     if support_sliding_window and rope_mode == RopeMode.NORMAL:
@@ -578,8 +583,6 @@ def test_paged_attention_kv_cache_remove_sequence(kv_cache_and_config):
         )
 
 
-@tvm.testing.requires_gpu
-@tvm.testing.requires_cuda
 def test_paged_attention_kv_cache_fork_sequence(kv_cache_and_config):
     kv_cache, rope_mode, support_sliding_window = kv_cache_and_config
     if support_sliding_window and rope_mode == RopeMode.NORMAL:
@@ -656,8 +659,6 @@ def test_paged_attention_kv_cache_fork_sequence(kv_cache_and_config):
     apply_attention(kv_cache, rope_mode, [(10, 1), (12, 1)], cached_k, cached_v)
 
 
-@tvm.testing.requires_gpu
-@tvm.testing.requires_cuda
 def test_paged_attention_kv_cache_unlimited_depth(kv_cache_and_config):
     kv_cache, rope_mode, support_sliding_window = kv_cache_and_config
     if support_sliding_window and rope_mode == RopeMode.NORMAL:
@@ -707,8 +708,6 @@ def test_paged_attention_kv_cache_unlimited_depth(kv_cache_and_config):
     assert fis_empty(kv_cache), "The KV cache is not empty after removing all sequences"
 
 
-@tvm.testing.requires_gpu
-@tvm.testing.requires_cuda
 def test_paged_attention_kv_cache_popn(kv_cache_and_config):
     kv_cache, rope_mode, support_sliding_window = kv_cache_and_config
     if support_sliding_window and rope_mode == RopeMode.NORMAL:
@@ -742,8 +741,6 @@ def test_paged_attention_kv_cache_popn(kv_cache_and_config):
     assert fis_empty(kv_cache), "The KV cache is not empty after removing all sequences"
 
 
-@tvm.testing.requires_gpu
-@tvm.testing.requires_cuda
 def test_paged_attention_kv_cache_sliding_window(kv_cache_and_config):
     kv_cache, rope_mode, support_sliding_window = kv_cache_and_config
     if not support_sliding_window or rope_mode == RopeMode.NORMAL:
@@ -790,8 +787,6 @@ def test_paged_attention_kv_cache_sliding_window(kv_cache_and_config):
         )
 
 
-@tvm.testing.requires_gpu
-@tvm.testing.requires_cuda
 def test_paged_attention_kv_cache_sliding_window_fork(kv_cache_and_config):
     kv_cache, rope_mode, support_sliding_window = kv_cache_and_config
     if not support_sliding_window or rope_mode == RopeMode.NORMAL:
@@ -859,8 +854,6 @@ def test_paged_attention_kv_cache_sliding_window_fork(kv_cache_and_config):
     # seq_len: [15+6, 20+13, 25+7, 38, 41, 43, 24+6]
 
 
-@tvm.testing.requires_gpu
-@tvm.testing.requires_cuda
 def test_paged_attention_kv_cache_tree_attn(kv_cache_and_config):
     kv_cache, rope_mode, support_sliding_window = kv_cache_and_config
     if support_sliding_window:
