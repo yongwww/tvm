@@ -74,9 +74,8 @@ def fused_NT_matmul1_multiply_multiply4_cast7(astype132: T.Buffer((T.int64(1), T
         compute_intermediate_1[blockIdx_x * 16 + threadIdx_y] = T.Cast("float16", cross_thread_NT_matmul_intermediate_local_1[0] * (model_layers_0_self_attn_o_proj_q_calibration_scale3_1[0] * model_layers_0_self_attn_o_proj_q_scale3_1[0]))
 
 def test_tir():
-    with tvm.transform.PassContext(opt_level=3):
-        ir_mod = tvm.lower(fused_NT_matmul1_multiply_multiply4_cast7)
-    mod = tvm.build(fused_NT_matmul1_multiply_multiply4_cast7, target="cuda")
+    target = tvm.target.Target("nvidia/nvidia-h100")
+    mod = tvm.build(fused_NT_matmul1_multiply_multiply4_cast7, target=target)
 
 if __name__ == "__main__":
     test_tir()
