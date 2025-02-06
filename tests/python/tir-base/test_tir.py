@@ -6,7 +6,6 @@ import tvm.testing
 
 @T.prim_func
 def fused_NT_matmul1_multiply_multiply4_cast7(astype132: T.Buffer((T.int64(1), T.int64(1), T.int64(2048)), "e4m3_float8"), model_layers_0_self_attn_o_proj_q_weight3: T.Buffer((T.int64(2048), T.int64(2048)), "e4m3_float8"), model_layers_0_self_attn_o_proj_q_calibration_scale3: T.Buffer((T.int64(1),), "float32"), model_layers_0_self_attn_o_proj_q_scale3: T.Buffer((T.int64(1),), "float32"), compute_intermediate: T.Buffer((T.int64(1), T.int64(1), T.int64(2048)), "float16")):
-    T.func_attr({"target": T.target({"arch": "sm_101", "host": {"keys": ["arm_cpu", "cpu"], "kind": "llvm", "mcpu": "generic", "mtriple": "aarch64-unknown-linux-gnu", "tag": ""}, "keys": ["cuda", "gpu"], "kind": "cuda", "libs": ["thrust"], "max_num_threads": 1024, "max_shared_memory_per_block": 49152, "max_threads_per_block": 1024, "registers_per_block": 65536, "tag": "", "thread_warp_size": 32}), "tir.is_scheduled": 1, "tir.noalias": T.bool(True)})
     blockIdx_x = T.launch_thread("blockIdx.x", 128)
     astype132_shared = T.allocate([512], "e4m3_float8x4", "shared")
     NT_matmul_rf_local = T.allocate([4], "float32", "local")
@@ -75,6 +74,7 @@ def fused_NT_matmul1_multiply_multiply4_cast7(astype132: T.Buffer((T.int64(1), T
 
 def test_tir():
     target = tvm.target.Target("nvidia/nvidia-h100")
+    # Failed if target is a100 or others
     mod = tvm.build(fused_NT_matmul1_multiply_multiply4_cast7, target=target)
 
 if __name__ == "__main__":
