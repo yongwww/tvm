@@ -16,7 +16,7 @@
 # under the License.
 # pylint: disable=unused-argument
 
-""" Test translate from relay. """
+"""Test translate from relay."""
 
 import torch
 from torch import fx
