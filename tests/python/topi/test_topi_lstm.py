@@ -17,7 +17,6 @@
 # pylint: disable=invalid-name
 """Test code for LSTM."""
 import numpy as np
-from rsa import verify
 import tvm
 from tvm import te, topi
 import tvm.testing
