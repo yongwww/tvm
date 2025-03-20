@@ -64,7 +64,7 @@ def compile_cuda(code, target_format="ptx", arch=None, options=None, path_target
         compute_version = "".join(
             get_target_compute_version(Target.current(allow_none=True)).split(".")
         )
-        arch = ["-gencode", f"arch=compute_{compute_version},code=sm_{compute_version}"]
+        arch = ["-gencode", f"arch=compute_{compute_version}a,code=sm_{compute_version}a"]
 
     temp = utils.tempdir()
     file_name = "tvm_kernels"
@@ -90,7 +90,7 @@ def compile_cuda(code, target_format="ptx", arch=None, options=None, path_target
 
     file_target = path_target if path_target else temp_target
     cmd = ["nvcc"]
-    cmd += [f"--{target_format}", "-O3"]
+    cmd += [f"--{target_format}", "-O3"] # cmd += [f"--{target_format}", "-O3", "-keep"]
     if kernels_output_dir is not None:
         cmd += ["-lineinfo"]
     if isinstance(arch, list):

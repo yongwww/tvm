@@ -131,6 +131,16 @@ TVM_REGISTER_TARGET_TAG("nvidia/jetson-agx-orin-64gb")
                                                  {"mtriple", String("aarch64-linux-gnu")},
                                                  {"mcpu", String("cortex-a78")},
                                                  {"num-cores", runtime::Int(12)}}}});
+
+TVM_REGISTER_TARGET_TAG("nvidia/jetson-thor")
+    .set_config({{"kind", String("cuda")},
+                 {"arch", String("sm_101")},
+                 {"max_shared_memory_per_block", runtime::Int(49152)},
+                 {"max_threads_per_block", runtime::Int(1024)},
+                 {"thread_warp_size", runtime::Int(32)},
+                 {"registers_per_block", runtime::Int(65536)},
+                 {"host", Map<String, ObjectRef>{{"kind", String("llvm")},
+                                                 {"num-cores", runtime::Int(12)}}}});
 #endif  // TVM_LLVM_VERSION >= 110
 #endif  // TVM_LLVM_HAS_AARCH64_TARGET
 
