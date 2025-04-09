@@ -22,7 +22,8 @@
 #include <sstream>
 #include <variant>
 #include <vector>
-// TODO (yongwww): Generalize this to handle for different precisions, or create a new runner for fp4
+// TODO (yongwww): Generalize this to handle for different precisions, or create a new runner for
+// fp4
 #include "../../cuda/cuda_common.h"
 
 // clang-format off
@@ -31,6 +32,7 @@
 #include "cutlass/epilogue/collective/collective_builder.hpp"
 #include "cutlass/gemm/device/gemm_universal_adapter.h"
 #include "cutlass/gemm/kernel/gemm_universal.hpp"
+#include "cutlass/util/packed_stride.hpp"
 // clang-format on
 
 #define CUTLASS_CHECK(status)                                      \
@@ -44,16 +46,15 @@ using namespace cute;
 // auto yong_op = cutlass::gemm::collective::KernelScheduleAuto>::CollectiveOp;
 using ProblemShape = Shape<int, int, int, int>;
 
-template <typename KernelTraits, typename ElementA, typename ElementB, typename ElementC,
-          typename LayoutA = cutlass::layout::RowMajor,
+template <typename KernelTraits, typename ElementC, typename LayoutA = cutlass::layout::RowMajor,
           typename LayoutB = cutlass::layout::ColumnMajor,
           typename LayoutC = cutlass::layout::RowMajor>
 struct CutlassGemmRunner {
-  static constexpr int AlignmentA =
-      128 / cutlass::sizeof_bits<ElementA>::value;  // Alignment of A matrix in units of elements
+  static constexpr int AlignmentA = 32;
+  // 128 / cutlass::sizeof_bits<ElementA>::value;  // Alignment of A matrix in units of elements
 
-  static constexpr int AlignmentB =
-      128 / cutlass::sizeof_bits<ElementB>::value;  // Alignment of B matrix in units of elements
+  static constexpr int AlignmentB = 32;
+  // 128 / cutlass::sizeof_bits<ElementB>::value;  // Alignment of B matrix in units of elements
 
   static constexpr int AlignmentC =
       128 / cutlass::sizeof_bits<ElementC>::value;  // Alignment of C matrix in units of elements
@@ -61,62 +62,89 @@ struct CutlassGemmRunner {
   // Core kernel configurations
   using ElementAccumulator = float;  // Element type for internal accumulation
   using ScaleType = std::variant<ElementAccumulator, const ElementAccumulator*>;
-  using ArchTag = cutlass::arch::Sm100;  // Tag indicating the minimum SM that supports the intended feature
+  using ArchTag =
+      cutlass::arch::Sm100;  // Tag indicating the minimum SM that supports the intended feature
   using OperatorClass = cutlass::arch::OpClassBlockScaledTensorOp;
   using MmaTileShape = typename KernelTraits::MmaTileShape;
   using ClusterShape = typename KernelTraits::ClusterShape;
   using PerSmTileShape_MNK = typename KernelTraits::PerSmTileShape_MNK;
   using StageCountType =
       cutlass::gemm::collective::StageCountAuto;  // Stage count maximized based on the tile size
-  using KernelSchedule = typename KernelTraits::KernelSchedule;    // Kernel to launch
-  using EpilogueSchedule = cutlass::epilogue::collective::EpilogueScheduleAuto;  // Epilogue to launch
+  using KernelSchedule = typename KernelTraits::KernelSchedule;  // Kernel to launch
+  using EpilogueSchedule =
+      cutlass::epilogue::collective::EpilogueScheduleAuto;  // Epilogue to launch
 
   // Remove the hardcoded elements
   // TODO (yongwww): remove the hardcoded Element, to use the one in the passed arguments
-  using ElementA_Yong = cutlass::nv_float4_t<cutlass::float_e2m1_t>;
-  using ElementB_Yong = cutlass::nv_float4_t<cutlass::float_e2m1_t>; 
+  using Element = cutlass::nv_float4_t<cutlass::float_e2m1_t>;
   using CollectiveEpilogue = typename cutlass::epilogue::collective::CollectiveBuilder<
       ArchTag, OperatorClass, PerSmTileShape_MNK, ClusterShape,
       cutlass::epilogue::collective::EpilogueTileAuto, ElementAccumulator, ElementAccumulator,
       ElementC, LayoutC, AlignmentC, ElementC, LayoutC, AlignmentC, EpilogueSchedule>::CollectiveOp;
-  
+
   using CollectiveMainloop = typename cutlass::gemm::collective::CollectiveBuilder<
-      ArchTag, OperatorClass, ElementA_Yong, LayoutA, AlignmentA, ElementB_Yong, LayoutB, AlignmentB,
+      ArchTag, OperatorClass, Element, LayoutA, AlignmentA, Element, LayoutB, AlignmentB,
       ElementAccumulator, MmaTileShape, ClusterShape,
       cutlass::gemm::collective::StageCountAutoCarveout<static_cast<int>(
           sizeof(typename CollectiveEpilogue::SharedStorage))>,
-      cutlass::gemm::collective::KernelScheduleAuto>::CollectiveOp;
-      // cutlass::gemm::collective::KernelScheduleAuto>::CollectiveOp; //KernelSchedule>::CollectiveOp;
+      KernelSchedule>::CollectiveOp;
 
-  
-  using GemmKernel =
-      cutlass::gemm::kernel::GemmUniversal<ProblemShape, CollectiveMainloop, CollectiveEpilogue, void>;
-  
+  using GemmKernel = cutlass::gemm::kernel::GemmUniversal<ProblemShape, CollectiveMainloop,
+                                                          CollectiveEpilogue, void>;
 
   using Gemm = cutlass::gemm::device::GemmUniversalAdapter<GemmKernel>;
-  
 
   using StrideA = typename Gemm::GemmKernel::StrideA;
   using StrideB = typename Gemm::GemmKernel::StrideB;
   using StrideC = typename Gemm::GemmKernel::StrideC;
   using StrideD = typename Gemm::GemmKernel::StrideD;
-  
+
+  using ElementA = typename Gemm::ElementA;
+  using ElementB = typename Gemm::ElementB;
+  using ElementSFA = cutlass::float_ue4m3_t;
+  using ElementSFB = cutlass::float_ue4m3_t;
 
   void run_gemm(const ElementA* ptr_A, const ElementB* ptr_B, const ElementC* ptr_C,
                 ElementC* ptr_D, ProblemShape* problem_size, StrideA* stride_A, StrideB* stride_B,
                 StrideC* stride_C, StrideD* stride_D, uint8_t* workspace, int64_t workspace_size,
-                ScaleType alpha, ScaleType beta, cudaStream_t stream) {
+                ScaleType alpha, ScaleType beta, cudaStream_t stream, int64_t M, int64_t N,
+                int64_t K, ElementSFA* ptr_SFA, ElementSFB* ptr_SFB) {
     cutlass::KernelHardwareInfo hw_info;
     hw_info.device_id = 0;
     hw_info.sm_count =
         cutlass::KernelHardwareInfo::query_device_multiprocessor_count(hw_info.device_id);
-    typename Gemm::Arguments arguments{cutlass::gemm::GemmUniversalMode::kGemm,
-                                       *problem_size,
-                                       {ptr_A, *stride_A, ptr_B, *stride_B},
-                                       {{}, ptr_C, *stride_C, ptr_D, *stride_D},
-                                       //  {epilogue_params, ptr_C, *stride_C, ptr_D, *stride_D},
-                                       hw_info};
+    typename Gemm::Arguments arguments_del{
+        cutlass::gemm::GemmUniversalMode::kGemm,
+        *problem_size,
+        {ptr_A, *stride_A, ptr_B, *stride_B},
+        {{}, ptr_C, *stride_C, ptr_D, *stride_D},
+        //  {epilogue_params, ptr_C, *stride_C, ptr_D, *stride_D},
+        hw_info};
 
+    int m = static_cast<int>(M);
+    int n = static_cast<int>(N);
+    int k = static_cast<int>(K);
+    auto stride_a = cutlass::make_cute_packed_stride(StrideA{}, {m, k, 1});
+    auto stride_b = cutlass::make_cute_packed_stride(StrideB{}, {n, k, 1});
+    auto stride_c = cutlass::make_cute_packed_stride(StrideC{}, {m, n, 1});
+    auto stride_d = cutlass::make_cute_packed_stride(StrideD{}, {m, n, 1});
+    using Sm100BlkScaledConfig =
+        typename Gemm::GemmKernel::CollectiveMainloop::Sm100BlkScaledConfig;
+    auto layout_SFA = Sm100BlkScaledConfig::tile_atom_to_shape_SFA(cute::make_shape(m, n, k, 1));
+    auto layout_SFB = Sm100BlkScaledConfig::tile_atom_to_shape_SFB(cute::make_shape(m, n, k, 1));
+    typename Gemm::Arguments arguments{
+        cutlass::gemm::GemmUniversalMode::kGemm,
+        {m, n, k, 1},
+        {// Mainloop arguments
+         ptr_A, stride_a, ptr_B, stride_b, ptr_SFA, layout_SFA, ptr_SFB, layout_SFB},
+        {     // Epilogue arguments
+         {},  // alpha, beta
+         ptr_C,
+         stride_c,
+         ptr_D,
+         stride_d}};
+    // auto& fusion_args = arguments.epilogue.thread;
+    // fusion_args.alpha_ptr = static_cast<float const*>(alpha);
     ICHECK(alpha.index() == beta.index()) << "alpha and beta must have the same type";
     if (std::holds_alternative<ElementAccumulator>(alpha)) {
       arguments.epilogue.thread.alpha = std::get<ElementAccumulator>(alpha);
@@ -133,24 +161,55 @@ struct CutlassGemmRunner {
     CUTLASS_CHECK(gemm_op.can_implement(arguments));
     CHECK_GE(workspace_size, gemm_op.get_workspace_size(arguments));
     CUTLASS_CHECK(gemm_op.initialize(arguments, workspace, stream));
-    CUTLASS_CHECK(gemm_op.run(stream));
+    CUTLASS_CHECK(
+        gemm_op.run(arguments, workspace, stream));  // gemm_op.run(stream); gemm_op.run(stream)
   }
 };
 
-template <typename KernelTraits, typename ElementA, typename ElementB, typename ElementC>
-void cutlass_gemm(ElementA* x, ElementB* weight, uint8_t* workspace, int64_t workspace_size,
-                  int64_t m, int64_t n, int64_t k, std::variant<float, const float*> alpha,
-                  std::variant<float, const float*> beta, ElementC* out, cudaStream_t stream) {
-  using Runner = CutlassGemmRunner<KernelTraits, ElementA, ElementB, ElementC>;
+template <typename KernelTraits, typename ElementC>
+void cutlass_gemm_fp4(cutlass::float_e2m1_t* x, cutlass::float_e2m1_t* weight, uint8_t* workspace,
+                      int64_t workspace_size, int64_t m, int64_t n, int64_t k,
+                      std::variant<float, const float*> alpha,
+                      std::variant<float, const float*> beta, ElementC* out, cudaStream_t stream,
+                      cutlass::float_ue4m3_t* data_sfa, cutlass::float_ue4m3_t* data_sfb) {
+  // Use the ElementA and ElementB types defined within the Runner
+  using Runner = CutlassGemmRunner<KernelTraits, ElementC>;
+  using InternalElementA = typename Runner::ElementA;  // Should be nv_float4_t<...>
+  using InternalElementB = typename Runner::ElementB;  // Should be nv_float4_t<...>
   using StrideA = typename Runner::StrideA;
   using StrideB = typename Runner::StrideB;
-  using StrideC = typename Runner::StrideC;
+  using StrideC = typename Runner::StrideC;  // Assuming D uses StrideC layout
 
   Runner runner;
-  StrideA stride_A = cute::make_stride(k, Int<1>{}, int64_t{0});
-  StrideB stride_B = cute::make_stride(k, Int<1>{}, int64_t{0});
-  StrideC stride_D = cute::make_stride(n, Int<1>{}, int64_t{0});
+  // StrideA stride_A = cute::make_stride(k, Int<1>{}, int64_t{0});
+  // StrideB stride_B = cute::make_stride(k, Int<1>{}, int64_t{0});
+  // StrideC stride_D = cute::make_stride(n, Int<1>{}, int64_t{0});
+  auto stride_A = cutlass::make_cute_packed_stride(StrideA{}, {m, k, 1});
+  auto stride_B = cutlass::make_cute_packed_stride(StrideB{}, {n, k, 1});
+  auto stride_D = cutlass::make_cute_packed_stride(StrideC{}, {m, n, 1});
   ProblemShape problem_size{static_cast<int>(m), static_cast<int>(n), static_cast<int>(k), 1};
+  // Cast pointers to the type expected by the runner's run_gemm function
+  auto ptr_A = reinterpret_cast<const InternalElementA*>(x);
+  auto ptr_B = reinterpret_cast<const InternalElementB*>(weight);
+  // ProblemShape problem_size{static_cast<int>(m), static_cast<int>(n), static_cast<int>(k)};
   runner.run_gemm(x, weight, out, out, &problem_size, &stride_A, &stride_B, &stride_D, &stride_D,
-                  workspace, workspace_size, alpha, beta, stream);
+                  workspace, workspace_size, alpha, beta, stream, m, n, k, data_sfa, data_sfb);
 }
+
+// TODO (yongwww): Working in progress
+// 1. Remove the hardcoded using ElementA_Yong = cutlass::nv_float4_t<cutlass::float_e2m1_t>;
+//    should I use cutlass::nv_float4_t<cutlass::float_e2m1_t> in tvm_cutlass_fp8_gemm?
+//    cutlass::nv_float4_t<cutlass::float_e2m1_t> is necessary, otherwise will run into
+//    error: static assertion failed with "Could not build a collective for given parameters."
+//        static_assert(sizeof(ElementA) == 0, "Could not build a collective for given
+//        parameters.");
+//    wip: use cutlass::nv_float4_t<cutlass::float_e2m1_t> in tvm_cutlass_fp8_gemm
+//    seems we can remove the template in tvm_cutlass_gp4_gemm? use
+//    cutlass::nv_float4_t<cutlass::float_e2m1_t> as default in ElementA/B as cutlass example
+// 2. Add tests
+// 3. check if using args_from_options is necessary [Not Urgent]
+// 4. Confirm if we should merge with gemm_runner.cuh to use a single runner there [Not Urgent]
+
+// MLC
+// add the dispatch for mm
+// explore to use fp8 activation

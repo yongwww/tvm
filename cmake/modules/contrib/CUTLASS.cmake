@@ -68,6 +68,7 @@ if(USE_CUDA AND USE_CUTLASS)
     target_compile_options(tvm_cutlass_objs PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
     target_include_directories(tvm_cutlass_objs PRIVATE
       ${CUTLASS_DIR}/include
+      ${CUTLASS_DIR}/tools/util/include
       ${PROJECT_SOURCE_DIR}/3rdparty/cutlass_fpA_intB_gemm/cutlass_extensions/include
     )
     target_compile_definitions(tvm_cutlass_objs PRIVATE DMLC_USE_LOGGING_LIBRARY=<tvm/runtime/logging.h>)

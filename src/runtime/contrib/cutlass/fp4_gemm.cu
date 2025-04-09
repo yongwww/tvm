@@ -38,9 +38,10 @@ struct KernelTraits {
 namespace tvm {
 namespace runtime {
 
-template <typename ElementA, typename ElementB, typename ElementC>
-void tvm_cutlass_fp4_gemm(NDArray x, NDArray weight, NDArray workspace, NDArray alpha,
-                          NDArray out) {
+// template <typename ElementA, typename ElementB, typename ElementC>
+template <typename ElementC>
+void tvm_cutlass_fp4_scaled_gemm(NDArray x, NDArray weight, NDArray workspace, NDArray alpha,
+                                 NDArray sfa, NDArray sfb, NDArray out) {
   // Workspace is used for storing device-side gemm arguments and cutlass internal workspace.
   // Recommened size is 4MB.
   auto func = tvm::runtime::Registry::Get("runtime.get_cuda_stream");
@@ -51,7 +52,7 @@ void tvm_cutlass_fp4_gemm(NDArray x, NDArray weight, NDArray workspace, NDArray 
   CHECK_GE(out->ndim, 2);
   CHECK_EQ(alpha->dtype.code, kDLFloat);
   CHECK_EQ(alpha->dtype.bits, 32);
-  CHECK_EQ(alpha->ndim, 1);
+  CHECK_EQ(alpha->ndim, 1);  // TODO (yonwww): check alpha
   CHECK_EQ(alpha->shape[0], 1);
   int64_t m = 1;
   for (int i = 0; i < x->ndim - 1; ++i) {
@@ -63,17 +64,16 @@ void tvm_cutlass_fp4_gemm(NDArray x, NDArray weight, NDArray workspace, NDArray 
   const float* beta = nullptr;
   cudaStream_t stream = static_cast<cudaStream_t>((*func)().operator void*());
   // if (m <= 64) {
-  cutlass_gemm<KernelTraits>(
-      static_cast<ElementA*>(x->data), static_cast<ElementB*>(weight->data),
-      static_cast<uint8_t*>(workspace->data), workspace->shape[0], m, n, k,
-      static_cast<float*>(alpha->data), beta, static_cast<ElementC*>(out->data), stream);
-
+  cutlass_gemm_fp4<KernelTraits>(
+      static_cast<cutlass::float_e2m1_t*>(x->data),
+      static_cast<cutlass::float_e2m1_t*>(weight->data), static_cast<uint8_t*>(workspace->data),
+      workspace->shape[0], m, n, k, static_cast<float*>(alpha->data), beta,
+      static_cast<ElementC*>(out->data), stream, static_cast<cutlass::float_ue4m3_t*>(sfa->data),
+      static_cast<cutlass::float_ue4m3_t*>(sfb->data));
 }
 
-
-TVM_REGISTER_GLOBAL("cutlass.gemm_e2m1_e2m1_fp16")
-    .set_body_typed(
-        tvm_cutlass_fp4_gemm<cutlass::float_e2m1_t, cutlass::float_e2m1_t, cutlass::half_t>);
+TVM_REGISTER_GLOBAL("cutlass.scaled_gemm_e2m1_e2m1_fp16")
+    .set_body_typed(tvm_cutlass_fp4_scaled_gemm<cutlass::half_t>);
 
 }  // namespace runtime
 }  // namespace tvm
