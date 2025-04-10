@@ -22,7 +22,7 @@
 #include <sstream>
 #include <variant>
 #include <vector>
-// TODO (yongwww): Generalize this to handle for different precisions, or create a new runner for fp4
+
 #include "../../cuda/cuda_common.h"
 
 // clang-format off

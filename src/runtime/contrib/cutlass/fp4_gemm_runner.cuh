@@ -22,8 +22,7 @@
 #include <sstream>
 #include <variant>
 #include <vector>
-// TODO (yongwww): Generalize this to handle for different precisions, or create a new runner for
-// fp4
+
 #include "../../cuda/cuda_common.h"
 
 // clang-format off
@@ -43,7 +42,6 @@
   }
 
 using namespace cute;
-// auto yong_op = cutlass::gemm::collective::KernelScheduleAuto>::CollectiveOp;
 using ProblemShape = Shape<int, int, int, int>;
 
 template <typename KernelTraits, typename ElementC, typename LayoutA = cutlass::layout::RowMajor,
@@ -51,10 +49,7 @@ template <typename KernelTraits, typename ElementC, typename LayoutA = cutlass::
           typename LayoutC = cutlass::layout::RowMajor>
 struct CutlassGemmRunner {
   static constexpr int AlignmentA = 32;
-  // 128 / cutlass::sizeof_bits<ElementA>::value;  // Alignment of A matrix in units of elements
-
   static constexpr int AlignmentB = 32;
-  // 128 / cutlass::sizeof_bits<ElementB>::value;  // Alignment of B matrix in units of elements
 
   static constexpr int AlignmentC =
       128 / cutlass::sizeof_bits<ElementC>::value;  // Alignment of C matrix in units of elements
@@ -74,8 +69,6 @@ struct CutlassGemmRunner {
   using EpilogueSchedule =
       cutlass::epilogue::collective::EpilogueScheduleAuto;  // Epilogue to launch
 
-  // Remove the hardcoded elements
-  // TODO (yongwww): remove the hardcoded Element, to use the one in the passed arguments
   using Element = cutlass::nv_float4_t<cutlass::float_e2m1_t>;
   using CollectiveEpilogue = typename cutlass::epilogue::collective::CollectiveBuilder<
       ArchTag, OperatorClass, PerSmTileShape_MNK, ClusterShape,
@@ -109,18 +102,6 @@ struct CutlassGemmRunner {
                 StrideC* stride_C, StrideD* stride_D, uint8_t* workspace, int64_t workspace_size,
                 ScaleType alpha, ScaleType beta, cudaStream_t stream, int64_t M, int64_t N,
                 int64_t K, ElementSFA* ptr_SFA, ElementSFB* ptr_SFB) {
-    cutlass::KernelHardwareInfo hw_info;
-    hw_info.device_id = 0;
-    hw_info.sm_count =
-        cutlass::KernelHardwareInfo::query_device_multiprocessor_count(hw_info.device_id);
-    typename Gemm::Arguments arguments_del{
-        cutlass::gemm::GemmUniversalMode::kGemm,
-        *problem_size,
-        {ptr_A, *stride_A, ptr_B, *stride_B},
-        {{}, ptr_C, *stride_C, ptr_D, *stride_D},
-        //  {epilogue_params, ptr_C, *stride_C, ptr_D, *stride_D},
-        hw_info};
-
     int m = static_cast<int>(M);
     int n = static_cast<int>(N);
     int k = static_cast<int>(K);
@@ -143,8 +124,6 @@ struct CutlassGemmRunner {
          stride_c,
          ptr_D,
          stride_d}};
-    // auto& fusion_args = arguments.epilogue.thread;
-    // fusion_args.alpha_ptr = static_cast<float const*>(alpha);
     ICHECK(alpha.index() == beta.index()) << "alpha and beta must have the same type";
     if (std::holds_alternative<ElementAccumulator>(alpha)) {
       arguments.epilogue.thread.alpha = std::get<ElementAccumulator>(alpha);
@@ -174,16 +153,13 @@ void cutlass_gemm_fp4(cutlass::float_e2m1_t* x, cutlass::float_e2m1_t* weight, u
                       cutlass::float_ue4m3_t* data_sfa, cutlass::float_ue4m3_t* data_sfb) {
   // Use the ElementA and ElementB types defined within the Runner
   using Runner = CutlassGemmRunner<KernelTraits, ElementC>;
-  using InternalElementA = typename Runner::ElementA;  // Should be nv_float4_t<...>
-  using InternalElementB = typename Runner::ElementB;  // Should be nv_float4_t<...>
+  using InternalElementA = typename Runner::ElementA;
+  using InternalElementB = typename Runner::ElementB;
   using StrideA = typename Runner::StrideA;
   using StrideB = typename Runner::StrideB;
   using StrideC = typename Runner::StrideC;  // Assuming D uses StrideC layout
 
   Runner runner;
-  // StrideA stride_A = cute::make_stride(k, Int<1>{}, int64_t{0});
-  // StrideB stride_B = cute::make_stride(k, Int<1>{}, int64_t{0});
-  // StrideC stride_D = cute::make_stride(n, Int<1>{}, int64_t{0});
   auto stride_A = cutlass::make_cute_packed_stride(StrideA{}, {m, k, 1});
   auto stride_B = cutlass::make_cute_packed_stride(StrideB{}, {n, k, 1});
   auto stride_D = cutlass::make_cute_packed_stride(StrideC{}, {m, n, 1});
@@ -191,25 +167,6 @@ void cutlass_gemm_fp4(cutlass::float_e2m1_t* x, cutlass::float_e2m1_t* weight, u
   // Cast pointers to the type expected by the runner's run_gemm function
   auto ptr_A = reinterpret_cast<const InternalElementA*>(x);
   auto ptr_B = reinterpret_cast<const InternalElementB*>(weight);
-  // ProblemShape problem_size{static_cast<int>(m), static_cast<int>(n), static_cast<int>(k)};
   runner.run_gemm(x, weight, out, out, &problem_size, &stride_A, &stride_B, &stride_D, &stride_D,
                   workspace, workspace_size, alpha, beta, stream, m, n, k, data_sfa, data_sfb);
 }
-
-// TODO (yongwww): Working in progress
-// 1. Remove the hardcoded using ElementA_Yong = cutlass::nv_float4_t<cutlass::float_e2m1_t>;
-//    should I use cutlass::nv_float4_t<cutlass::float_e2m1_t> in tvm_cutlass_fp8_gemm?
-//    cutlass::nv_float4_t<cutlass::float_e2m1_t> is necessary, otherwise will run into
-//    error: static assertion failed with "Could not build a collective for given parameters."
-//        static_assert(sizeof(ElementA) == 0, "Could not build a collective for given
-//        parameters.");
-//    wip: use cutlass::nv_float4_t<cutlass::float_e2m1_t> in tvm_cutlass_fp8_gemm
-//    seems we can remove the template in tvm_cutlass_gp4_gemm? use
-//    cutlass::nv_float4_t<cutlass::float_e2m1_t> as default in ElementA/B as cutlass example
-// 2. Add tests
-// 3. check if using args_from_options is necessary [Not Urgent]
-// 4. Confirm if we should merge with gemm_runner.cuh to use a single runner there [Not Urgent]
-
-// MLC
-// add the dispatch for mm
-// explore to use fp8 activation

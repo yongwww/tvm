@@ -23,7 +23,6 @@
 #include <tvm/runtime/packed_func.h>
 #include <tvm/runtime/registry.h>
 
-// #include "../cublas/cublas_utils.h"
 #include "fp4_gemm_runner.cuh"
 
 #if defined(CUTLASS_ARCH_MMA_SM100_SUPPORTED)
@@ -38,7 +37,6 @@ struct KernelTraits {
 namespace tvm {
 namespace runtime {
 
-// template <typename ElementA, typename ElementB, typename ElementC>
 template <typename ElementC>
 void tvm_cutlass_fp4_scaled_gemm(NDArray x, NDArray weight, NDArray workspace, NDArray alpha,
                                  NDArray sfa, NDArray sfb, NDArray out) {
@@ -52,7 +50,7 @@ void tvm_cutlass_fp4_scaled_gemm(NDArray x, NDArray weight, NDArray workspace, N
   CHECK_GE(out->ndim, 2);
   CHECK_EQ(alpha->dtype.code, kDLFloat);
   CHECK_EQ(alpha->dtype.bits, 32);
-  CHECK_EQ(alpha->ndim, 1);  // TODO (yonwww): check alpha
+  CHECK_EQ(alpha->ndim, 1);
   CHECK_EQ(alpha->shape[0], 1);
   int64_t m = 1;
   for (int i = 0; i < x->ndim - 1; ++i) {
@@ -63,7 +61,6 @@ void tvm_cutlass_fp4_scaled_gemm(NDArray x, NDArray weight, NDArray workspace, N
   int64_t k = x->shape[x->ndim - 1];
   const float* beta = nullptr;
   cudaStream_t stream = static_cast<cudaStream_t>((*func)().operator void*());
-  // if (m <= 64) {
   cutlass_gemm_fp4<KernelTraits>(
       static_cast<cutlass::float_e2m1_t*>(x->data),
       static_cast<cutlass::float_e2m1_t*>(weight->data), static_cast<uint8_t*>(workspace->data),

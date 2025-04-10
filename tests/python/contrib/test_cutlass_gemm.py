@@ -535,7 +535,6 @@ def ref_nvfp4_quant(x, global_scale):
     # The original code quantizes the scale to float8_e4m3fn and back to float32.
     # This step is omitted here. Calculations are kept in float32.
     # If float8 quantization behavior is critical, a custom function or library is needed.
-    print(f"yongwww global_scale: {global_scale}\n type: {type(global_scale)}")
 
     assert isinstance(global_scale, np.ndarray) or isinstance(global_scale, np.number), "global_scale must be a NumPy array or scalar"
     if isinstance(global_scale, np.ndarray):
@@ -635,16 +634,32 @@ def test_fp4_e2m1_blockscaled_gemm():
     a_np, a_scale_np = ref_nvfp4_quant(a_dtype, a_global_scale)
     b_np, b_scale_np = ref_nvfp4_quant(b_dtype, b_global_scale)
 
+    a_np = b_np =  np.random.randn(M, N // 2).astype(np.uint8)
+    rounded_m = ((M + 128 - 1) // 128) * 128 # 128
+    scale_n = N // block_size
+    rounded_n = ((scale_n + 4 - 1) // 4) * 4 # 8
+    a_scale_np = b_scale_np = np.random.randn(rounded_m, rounded_n // 4).astype(ml_dtypes.float8_e4m3fn)
+
     # x_np, x_scale_np = rowwise_quant_fp8_e4m3((M, K), block_size, dtype)
     # w_np, w_scale_np = blockwise_quant_fp8_e4m3((N, K), block_size, dtype)
     # o_np = blockwise_matmul(a_np, x_scale_np, b_np, w_scale_np, block_size, dtype)
+
+    # Print types and shapes of all inputs
+    # print(f"Type of a_dtype: {a_dtype.dtype}, Shape: {a_dtype.shape}")
+    # print(f"Type of b_dtype: {b_dtype.dtype}, Shape: {b_dtype.shape}")
+    print(f"Type of a_global_scale: {a_global_scale.dtype}")  # Scalar, no shape
+    print(f"Type of b_global_scale: {b_global_scale.dtype}")  # Scalar, no shape
+    print(f"Type of alpha: {alpha.dtype}")  # Scalar, no shape
+    print(f"Type of a_np: {a_np.dtype}, Shape: {a_np.shape}")
+    print(f"Type of a_scale_np: {a_scale_np.dtype}, Shape: {a_scale_np.shape}")
+    print(f"Type of b_np: {b_np.dtype}, Shape: {b_np.shape}")
+    print(f"Type of b_scale_np: {b_scale_np.dtype}, Shape: {b_scale_np.shape}")
 
     a_tvm = tvm.nd.array(a_np, device=device)
     b_tvm = tvm.nd.array(b_np, device=device)
     workspace = tvm.nd.empty((4096 * 1024,), dtype="uint8", device=device)
     o_tvm = tvm.nd.empty((M, N), dtype=dtype, device=device)
     alpha_tvm = tvm.nd.array([alpha], device=device)
-    # TODO (yongwww): sf
     sfa_tvm = tvm.nd.array(a_scale_np, device=device)
     sfb_tvm = tvm.nd.array(b_scale_np, device=device)
     gemm_func(
