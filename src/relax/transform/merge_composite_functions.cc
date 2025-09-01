@@ -54,6 +54,7 @@
  * is important since the dependency relation is transitive.
  */
 
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/expr_functor.h>
 #include <tvm/relax/struct_info.h>
 #include <tvm/relax/transform.h>
@@ -64,8 +65,6 @@
 
 namespace tvm {
 namespace relax {
-
-using relay::GraphPartitioner;
 
 namespace {
 
@@ -170,20 +169,23 @@ class CompositeGroupsBuilder : public MemoizedExprTranslator<Group*> {
   Optional<String> GetCodegenName(const Expr& callee) {
     auto const* gvar = callee.as<GlobalVarNode>();
     if (!gvar) {
-      return NullOpt;
+      return std::nullopt;
     }
 
     auto composite_name_opt =
         mod_->Lookup(GetRef<GlobalVar>(gvar))->GetAttr<String>(attr::kComposite);
     if (!composite_name_opt) {
-      return NullOpt;
+      return std::nullopt;
     }
 
     return relax::GetCodegenName(composite_name_opt.value());
   }
 
   Optional<String> GetCodegenName(Group* group) {
-    return Downcast<Optional<String>>(group->attrs.Get(attr::kCodegen));
+    if (auto opt_str = group->attrs.Get(attr::kCodegen)) {
+      return Downcast<String>(opt_str.value());
+    }
+    return std::nullopt;
   }
 
   Group* CreateNewGroup(const CallNode* call) {
@@ -268,7 +270,7 @@ class CompositeGroupsBuilder : public MemoizedExprTranslator<Group*> {
 
   std::vector<Group*> GetGroupsToMerge(const CallNode* call) {
     Optional<String> codegen_name = GetCodegenName(call->op);
-    if (!codegen_name.defined()) {
+    if (!codegen_name.has_value()) {
       return {};
     }
 
@@ -412,7 +414,7 @@ IRModule MergeCompositeFunctions(IRModule mod) {
 namespace transform {
 
 Pass MergeCompositeFunctions() {
-  runtime::TypedPackedFunc<IRModule(IRModule, PassContext)> pass_func =  //
+  auto pass_func =  //
       [=](IRModule mod, PassContext pc) { return relax::MergeCompositeFunctions(mod); };
   return CreateModulePass(/*pass_function=*/pass_func,              //
                           /*opt_level=*/0,                          //
@@ -420,8 +422,10 @@ Pass MergeCompositeFunctions() {
                           /*required=*/{});
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.MergeCompositeFunctions")
-    .set_body_typed(MergeCompositeFunctions);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.transform.MergeCompositeFunctions", MergeCompositeFunctions);
+});
 
 }  // namespace transform
 

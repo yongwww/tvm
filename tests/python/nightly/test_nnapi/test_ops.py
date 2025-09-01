@@ -34,7 +34,7 @@ def _build_and_run_network(remote_obj, tracker, mod, input_data):
 
     def execute_on_host(mod, inputs):
         with tvm.transform.PassContext(opt_level=3):
-            ex = tvm.relax.build(mod, target="llvm")
+            ex = tvm.compile(mod, target="llvm")
         dev = tvm.cpu(0)
         vm = tvm.relax.VirtualMachine(ex, device=dev)
         output = vm["main"](*inputs)
@@ -272,7 +272,7 @@ def test_mean():
             ) -> R.Tensor((1, 10, 1), "float32"):
                 n = T.int64()
                 with R.dataflow():
-                    t0: R.Tensor((1, 10, 15), "float32") = R.mean(i0, axis=[-1], keepdims=True)
+                    t0: R.Tensor((1, 10, 1), "float32") = R.mean(i0, axis=[-1], keepdims=True)
                     R.output(t0)
                 return t0
 

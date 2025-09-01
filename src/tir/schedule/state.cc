@@ -17,10 +17,13 @@
  * under the License.
  */
 #include <tvm/arith/int_set.h>
+#include <tvm/ffi/reflection/registry.h>
 
 #include "./utils.h"
 namespace tvm {
 namespace tir {
+
+TVM_FFI_STATIC_INIT_BLOCK({ ScheduleStateNode::RegisterReflection(); });
 
 template <class K, class V>
 using SMap = std::unordered_map<K, V, ObjectPtrHash, ObjectPtrEqual>;
@@ -750,7 +753,7 @@ class ChildReplacer : private StmtMutator {
     int n = static_cast<int>(op->seq.size());
     if (0 <= i && i < n) {
       const Stmt& stmt = op->seq[i];
-      Optional<Stmt> new_stmt = NullOpt;
+      Optional<Stmt> new_stmt = std::nullopt;
       const StmtNode* src_stmt = this->src_stmt_;
       // `stmt` can be For or BlockRealize
       // `src_stmt` can be For or Block
@@ -945,7 +948,7 @@ void ScheduleStateNode::Replace(const tir::StmtSRef& _src_sref, const Stmt& tgt_
     }
     // Ensure the uniqueness of `this->mod` and `this->mod->functions`
     IRModuleNode* new_mod = this->mod.CopyOnWrite();
-    MapNode* new_map = new_mod->functions.CopyOnWrite();
+    ffi::MapObj* new_map = new_mod->functions.CopyOnWrite();
     // Move out the PrimFunc where the sref belong while ensuring uniqueness
     PrimFunc ref_new_func = Downcast<PrimFunc>(std::move(new_map->at(g_var)));
     ICHECK(ref_new_func.get() == g_func);
@@ -1011,21 +1014,22 @@ TVM_DLL Array<Bool> GetCachedFlags(const ScheduleState& self, const StmtSRef& bl
 
 /**************** FFI ****************/
 
-TVM_REGISTER_NODE_TYPE(ScheduleStateNode);
-TVM_REGISTER_GLOBAL("tir.schedule.ScheduleState")
-    .set_body_typed([](IRModule mod, int debug_mask, bool enable_check) -> ScheduleState {
-      return ScheduleState(mod, debug_mask, enable_check);
-    });
-TVM_REGISTER_GLOBAL("tir.schedule.ScheduleStateGetBlockScope")
-    .set_body_method<ScheduleState>(&ScheduleStateNode::GetBlockScope);
-TVM_REGISTER_GLOBAL("tir.schedule.ScheduleStateReplace")
-    .set_body_method<ScheduleState>(&ScheduleStateNode::Replace);
-TVM_REGISTER_GLOBAL("tir.schedule.ScheduleStateGetSRef")
-    .set_body_typed([](ScheduleState self, Stmt stmt) -> Optional<StmtSRef> {
-      auto it = self->stmt2ref.find(stmt.get());
-      return it != self->stmt2ref.end() ? it->second : Optional<StmtSRef>(NullOpt);
-    });
-TVM_REGISTER_GLOBAL("tir.schedule.ScheduleStateGetCachedFlags").set_body_typed(GetCachedFlags);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef()
+      .def("tir.schedule.ScheduleState",
+           [](IRModule mod, int debug_mask, bool enable_check) -> ScheduleState {
+             return ScheduleState(mod, debug_mask, enable_check);
+           })
+      .def_method("tir.schedule.ScheduleStateGetBlockScope", &ScheduleStateNode::GetBlockScope)
+      .def_method("tir.schedule.ScheduleStateReplace", &ScheduleStateNode::Replace)
+      .def("tir.schedule.ScheduleStateGetSRef",
+           [](ScheduleState self, Stmt stmt) -> Optional<StmtSRef> {
+             auto it = self->stmt2ref.find(stmt.get());
+             return it != self->stmt2ref.end() ? it->second : Optional<StmtSRef>(std::nullopt);
+           })
+      .def("tir.schedule.ScheduleStateGetCachedFlags", GetCachedFlags);
+});
 
 }  // namespace tir
 }  // namespace tvm

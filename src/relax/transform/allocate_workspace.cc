@@ -23,9 +23,11 @@
  * satisfy their temporary storage requirement.
  */
 
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/ir/name_supply.h>
 #include <tvm/relax/expr.h>
 #include <tvm/relax/expr_functor.h>
+#include <tvm/relax/transform.h>
 
 #include "../op/op_common.h"
 
@@ -195,13 +197,15 @@ class WorkspaceProvider : ExprMutator {
 namespace transform {
 
 Pass AllocateWorkspace() {
-  runtime::TypedPackedFunc<IRModule(IRModule, PassContext)> pass_func =
-      [=](IRModule m, PassContext pc) { return relax::WorkspaceProvider(m).Run(); };
+  auto pass_func = [=](IRModule m, PassContext pc) { return relax::WorkspaceProvider(m).Run(); };
 
   return CreateModulePass(pass_func, 0, "AllocateWorkspace", {});
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.AllocateWorkspace").set_body_typed(AllocateWorkspace);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.transform.AllocateWorkspace", AllocateWorkspace);
+});
 
 }  // namespace transform
 }  // namespace tvm

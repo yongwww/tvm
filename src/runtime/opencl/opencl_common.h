@@ -24,11 +24,12 @@
 #ifndef TVM_RUNTIME_OPENCL_OPENCL_COMMON_H_
 #define TVM_RUNTIME_OPENCL_OPENCL_COMMON_H_
 
-#include <tvm/runtime/c_runtime_api.h>
+#include <tvm/ffi/function.h>
+#include <tvm/runtime/base.h>
 #include <tvm/runtime/device_api.h>
 #include <tvm/runtime/logging.h>
+#include <tvm/runtime/memory/memory_manager.h>
 #include <tvm/runtime/ndarray.h>
-#include <tvm/runtime/packed_func.h>
 #include <tvm/runtime/profiling.h>
 
 /* There are many OpenCL platforms that do not yet support OpenCL 2.0,
@@ -74,11 +75,12 @@
 #include "../pack_args.h"
 #include "../texture.h"
 #include "../thread_storage_scope.h"
-#include "../workspace_pool.h"
 
 namespace tvm {
 namespace runtime {
 namespace cl {
+
+using tvm::runtime::memory::Buffer;
 
 static_assert(sizeof(cl_mem) == sizeof(void*), "Required to store cl_mem inside void*");
 
@@ -221,6 +223,12 @@ inline cl_channel_type DTypeToOpenCLChannelType(DLDataType data_type) {
 class OpenCLThreadEntry;
 struct BufferDescriptor;
 
+struct CLDeviceInfo {
+  cl_platform_id platform_id;      // platform Id
+  cl_uint image_row_align;         // CL_DEVICE_IMAGE_PITCH_ALIGNMENT_KHR
+  bool image_from_buffer_support;  // extn: cl_khr_image2d_from_buffer
+};
+
 /*!
  * \brief Process global OpenCL workspace.
  */
@@ -234,8 +242,8 @@ class OpenCLWorkspace : public DeviceAPI {
   std::unordered_map<cl_platform_id, cl_context> contexts;
   // whether the workspace it initialized.
   bool initialized_{false};
-  // map device to platform
-  std::unordered_map<cl_device_id, cl_platform_id> device_to_platform;
+  // map device to various device informations
+  std::unordered_map<cl_device_id, CLDeviceInfo> device_info;
   // the devices
   std::vector<cl_device_id> devices;
   // the queues
@@ -251,6 +259,7 @@ class OpenCLWorkspace : public DeviceAPI {
   std::vector<size_t> free_kernel_ids;
   // the mutex for initialization
   std::mutex mu;
+
   // destructor
   ~OpenCLWorkspace() {
     for (auto& it : contexts) {
@@ -284,6 +293,15 @@ class OpenCLWorkspace : public DeviceAPI {
         << "Invalid OpenCL device_id=" << dev.device_id << ". " << GetError();
     return events[dev.device_id];
   }
+  bool IsOpenCLExtensionSupported(cl_device_id did, const std::string& name) {
+    size_t reqd_size = 0;
+    OPENCL_CALL(clGetDeviceInfo(did, CL_DEVICE_EXTENSIONS, 0, nullptr, &reqd_size));
+    std::vector<char> extn_buf(reqd_size);
+    OPENCL_CALL(clGetDeviceInfo(did, CL_DEVICE_EXTENSIONS, reqd_size, extn_buf.data(), nullptr));
+    std::string extensions(extn_buf.data());
+    return (extensions.find(name) != std::string::npos);
+  }
+
   // is current clCommandQueue in profiling mode
   bool IsProfiling(Device dev) {
     cl_command_queue queue = GetQueue(dev);
@@ -309,20 +327,32 @@ class OpenCLWorkspace : public DeviceAPI {
     OPENCL_CALL(clReleaseCommandQueue(queue));
     cl_int err_code;
     cl_device_id did = cl::OpenCLWorkspace::Global()->GetCLDeviceID(dev.device_id);
-    cl_platform_id platform = cl::OpenCLWorkspace::Global()->device_to_platform[did];
+    cl_platform_id platform = cl::OpenCLWorkspace::Global()->device_info[did].platform_id;
     auto profiling_queue = clCreateCommandQueue(cl::OpenCLWorkspace::Global()->contexts[platform],
                                                 did, prop, &err_code);
     OPENCL_CHECK_ERROR(err_code);
     cl::OpenCLWorkspace::Global()->queues[dev.device_id] = profiling_queue;
   }
+  cl_uint GetImageAlignment(int device_id) {
+    return device_info[GetCLDeviceID(device_id)].image_row_align;
+  }
+  bool IsBufferToImageSupported(int device_id) {
+    return device_info[GetCLDeviceID(device_id)].image_from_buffer_support;
+  }
+
+  void* AllocDataSpaceView(Device dev, void* data, ffi::Shape shape, DLDataType dtype,
+                           Optional<String> mem_scope = std::nullopt);
+  void FreeDataSpaceView(Device dev, void* ptr);
 
   cl_device_id GetCLDeviceID(int device_id);
   // override device API
   void SetDevice(Device dev) final;
-  void GetAttr(Device dev, DeviceAttrKind kind, TVMRetValue* rv) final;
+  void GetAttr(Device dev, DeviceAttrKind kind, ffi::Any* rv) final;
   void* AllocDataSpace(Device dev, size_t size, size_t alignment, DLDataType type_hint) final;
   void* AllocDataSpace(Device dev, int ndim, const int64_t* shape, DLDataType dtype,
-                       Optional<String> mem_scope = NullOpt) final;
+                       Optional<String> mem_scope = std::nullopt) final;
+  void* AllocDataSpace(Device dev, size_t width, size_t height, DLDataType type_hint,
+                       Optional<String> mem_scope = std::nullopt);
   void* GetNativePtr(const tvm::runtime::NDArray& narr);
   void SetNativePtr(const tvm::runtime::NDArray& narr, void* host_ptr, size_t buf_size);
   void SetPerfHint(Device dev, cl_uint perf_hint);
@@ -330,11 +360,12 @@ class OpenCLWorkspace : public DeviceAPI {
   void StreamSync(Device dev, TVMStreamHandle stream) final;
   void* AllocWorkspace(Device dev, size_t size, DLDataType type_hint) final;
   void FreeWorkspace(Device dev, void* data) final;
+  size_t GetDataSize(const DLTensor& arr, Optional<String> mem_scope = std::nullopt) final;
 
-  // Texture (image2d_t) alloca APIs
-  cl_mem AllocTexture(Device dev, size_t width, size_t height, DLDataType type_hint);
-  void* AllocTextureWorkspace(Device dev, size_t width, size_t height, DLDataType type_hint);
-  void FreeTextureWorkspace(Device dev, void* data);
+  // cl_mem alloc utils
+  void* AllocCLBuffer(Device dev, size_t size, size_t alignment, DLDataType type_hint);
+  void* AllocCLImage(Device dev, void* back_buffer, size_t width, size_t height, size_t row_pitch,
+                     DLDataType type_hint, Optional<String> mem_scope);
 
   /*!
    * \brief Get the thread local ThreadEntry
@@ -370,13 +401,8 @@ class OpenCLThreadEntry {
   Device device;
   /*! \brief The thread-local kernel table */
   std::vector<KTEntry> kernel_table;
-  /*! \brief workspace pool */
-  WorkspacePool pool;
-  /*! \brief texture pool */
-  TexturePool texture_pool;
   // constructor
-  OpenCLThreadEntry(DLDeviceType device_type, DeviceAPI* device_api)
-      : pool(device_type, device_api), texture_pool(device_type, device_api) {
+  OpenCLThreadEntry(DLDeviceType device_type, DeviceAPI* device_api) {
     device.device_id = 0;
     device.device_type = device_type;
   }
@@ -414,9 +440,14 @@ struct BufferDescriptor {
   static MemoryLayout MemoryLayoutFromScope(Optional<String> mem_scope);
   static String ScopeFromMemoryLayout(MemoryLayout mem_scope);
 
+  /* clBuffer object */
+  // buffer should be the first element here
   cl_mem buffer{nullptr};
+  cl::BufferDescriptor* back_buffer{nullptr};
   cl_uchar* host_ptr{nullptr};
   MemoryLayout layout{MemoryLayout::kBuffer1D};
+  Buffer mbuf{nullptr};  // MemoryManager ref.
+  bool is_compat_view{false};
 };
 }  // namespace cl
 
@@ -425,7 +456,7 @@ struct BufferDescriptor {
 // To make the call thread-safe, we create a thread-local kernel table
 // and lazily install new kernels into the kernel table when the kernel is called.
 // The kernels are recycled when the module get destructed.
-class OpenCLModuleNodeBase : public ModuleNode {
+class OpenCLModuleNodeBase : public ffi::ModuleObj {
  public:
   // Kernel table reference entry.
   struct KTRefEntry {
@@ -441,14 +472,14 @@ class OpenCLModuleNodeBase : public ModuleNode {
    */
   virtual cl::OpenCLWorkspace* GetGlobalWorkspace();
 
-  const char* type_key() const final { return workspace_->type_key.c_str(); }
+  const char* kind() const final { return workspace_->type_key.c_str(); }
 
   /*! \brief Get the property of the runtime module .*/
   int GetPropertyMask() const final {
-    return ModulePropertyMask::kBinarySerializable | ModulePropertyMask::kRunnable;
+    return ffi::Module::kBinarySerializable | ffi::Module::kRunnable;
   }
 
-  PackedFunc GetFunction(const String& name, const ObjectPtr<Object>& sptr_to_self) override;
+  Optional<ffi::Function> GetFunction(const String& name) override;
 
   // Initialize the programs
   virtual void Init() = 0;
@@ -478,14 +509,14 @@ class OpenCLModuleNode : public OpenCLModuleNodeBase {
                             std::unordered_map<std::string, FunctionInfo> fmap, std::string source)
       : OpenCLModuleNodeBase(fmap), data_(data), fmt_(fmt), source_(source) {}
 
-  PackedFunc GetFunction(const String& name, const ObjectPtr<Object>& sptr_to_self) final;
+  Optional<ffi::Function> GetFunction(const String& name) final;
   // Return true if OpenCL program for the requested function and device was created
   bool IsProgramCreated(const std::string& func_name, int device_id);
-  void SaveToFile(const String& file_name, const String& format) final;
-  void SaveToBinary(dmlc::Stream* stream) final;
+  void WriteToFile(const String& file_name, const String& format) const final;
+  ffi::Bytes SaveToBytes() const final;
   void SetPreCompiledPrograms(const std::string& bytes);
   std::string GetPreCompiledPrograms();
-  String GetSource(const String& format) final;
+  String InspectSource(const String& format) const final;
 
   // Initialize the programs
   void Init() override;
@@ -514,7 +545,7 @@ class OpenCLTimerNode : public TimerNode {
       cl::OpenCLWorkspace::Global()->GetEventQueue(dev_).clear();
       // Very first call of Start() leads to the recreation of
       // OpenCL command queue in profiling mode. This allows to run profile after inference.
-      recreateCommandQueue();
+      cl::OpenCLWorkspace::Global()->EnableQueueProfiling(dev_, true);
     }
     ++count_timer_execs;
     // set new first idx in event queue
@@ -549,7 +580,7 @@ class OpenCLTimerNode : public TimerNode {
     // Profiling session ends, recreate clCommandQueue in non-profiling mode
     // This will disable collection of cl_events in case of executing inference after profile
     if (count_timer_execs == 0) {
-      recreateCommandQueue();
+      cl::OpenCLWorkspace::Global()->EnableQueueProfiling(dev_, false);
       event_start_idxs.clear();
     }
   }
@@ -557,7 +588,7 @@ class OpenCLTimerNode : public TimerNode {
   OpenCLTimerNode() {}
   explicit OpenCLTimerNode(Device dev) : dev_(dev) {}
 
-  static constexpr const char* _type_key = "OpenCLTimerNode";
+  static constexpr const char* _type_key = "runtime.opencl.OpenCLTimerNode";
   static size_t count_timer_execs;
   static std::vector<size_t> event_start_idxs;
   TVM_DECLARE_FINAL_OBJECT_INFO(OpenCLTimerNode, TimerNode);
@@ -565,11 +596,6 @@ class OpenCLTimerNode : public TimerNode {
  private:
   int64_t duration;
   Device dev_;
-
-  void recreateCommandQueue() {
-    cl::OpenCLWorkspace::Global()->EnableQueueProfiling(
-        dev_, !cl::OpenCLWorkspace::Global()->IsProfiling(dev_));
-  }
 };
 }  // namespace runtime
 }  // namespace tvm

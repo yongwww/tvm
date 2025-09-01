@@ -22,6 +22,7 @@
  * \brief Renew the definition nodes for a TIR, including Var, Buffer and IterVar.
  */
 
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/tir/stmt_functor.h>
 #include <tvm/tir/transform.h>
 
@@ -82,7 +83,7 @@ class RenewDefMutator : public StmtExprMutator {
  private:
   Stmt operator()(Stmt stmt) {
     // override StmtMutator::operator() to disable copy_on_write
-    // Since this pass tries to explict create a new function rather than update the existing one
+    // Since this pass tries to explicit create a new function rather than update the existing one
     allow_copy_on_write_ = false;
     return VisitStmt(stmt);
   }
@@ -116,7 +117,7 @@ class RenewDefMutator : public StmtExprMutator {
         std::bind(&RenewDefMutator::VisitMatchBuffer, this, std::placeholders::_1));
 
     // Step 3. Visit body
-    Optional<Stmt> init = NullOpt;
+    Optional<Stmt> init = std::nullopt;
     if (op->init.defined()) {
       init = this->VisitStmt(op->init.value());
     }
@@ -290,7 +291,10 @@ class RenewDefMutator : public StmtExprMutator {
 
 PrimFunc RenewDefs(const PrimFunc& func) { return RenewDefMutator::Transform(func); }
 
-TVM_REGISTER_GLOBAL("tir.RenewDefs").set_body_typed(RenewDefs);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("tir.RenewDefs", RenewDefs);
+});
 
 }  // namespace tir
 }  // namespace tvm

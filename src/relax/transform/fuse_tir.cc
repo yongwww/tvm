@@ -16,6 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/analysis.h>
 #include <tvm/relax/attrs/op.h>
 #include <tvm/relax/expr_functor.h>
@@ -26,8 +27,6 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "../../relay/analysis/graph_partitioner.h"
-#include "../../support/arena.h"
 #include "../../tir/ir/functor_common.h"
 
 namespace tvm {
@@ -204,7 +203,8 @@ class FuseTIRBufferSubstitutor : private StmtExprMutator {
     BufferLoad load = Downcast<BufferLoad>(StmtExprMutator::VisitExpr_(_op));
     const Buffer& buffer = SubstituteBuffer(load->buffer);
     if (buffer.same_as(load->buffer)) {
-      return std::move(load);
+      return load;
+
     } else {
       auto n = make_object<BufferLoadNode>(*load.get());
       n->buffer = buffer;
@@ -216,7 +216,8 @@ class FuseTIRBufferSubstitutor : private StmtExprMutator {
     BufferStore store = Downcast<BufferStore>(StmtExprMutator::VisitStmt_(_op));
     const Buffer& buffer = SubstituteBuffer(store->buffer);
     if (buffer.same_as(store->buffer)) {
-      return std::move(store);
+      return store;
+
     } else {
       auto n = make_object<BufferStoreNode>(*store.get());
       n->buffer = buffer;
@@ -273,7 +274,8 @@ class FuseTIRBufferSubstitutor : private StmtExprMutator {
         writes.same_as(block->writes) &&  //
         match_buffers.same_as(block->match_buffers) &&
         alloc_buffers.same_as(block->alloc_buffers)) {
-      return std::move(block);
+      return block;
+
     } else {
       auto n = CopyOnWrite(block.get());
       n->reads = std::move(reads);
@@ -344,7 +346,8 @@ class BlockNameDeduplicator : public tir::StmtMutator {
     String name = GetUniqueName(block->name_hint);
 
     if (name == block->name_hint) {
-      return std::move(block);
+      return block;
+
     } else {
       ObjectPtr<BlockNode> n = CopyOnWrite(block.get());
       n->name_hint = std::move(name);
@@ -686,11 +689,12 @@ class FusedTIRConstructor : public ExprVisitor {
     if (it != func_info_.expr2buffers.end()) {
       int begin_buf_idx = 0;
       int end_buf_idx = 0;
-      const TupleType& tuple_type = Downcast<TupleType>(tuple_get_item->tuple->checked_type());
+      const TupleStructInfo& tuple_sinfo =
+          Downcast<TupleStructInfo>(tuple_get_item->tuple->struct_info_);
       for (int i = 0; i < tuple_get_item->index; ++i) {
-        begin_buf_idx += GetTotalTensorSize(tuple_type->fields[i]);
+        begin_buf_idx += GetTotalTensorSize(tuple_sinfo->fields[i]);
       }
-      end_buf_idx = begin_buf_idx + GetTotalTensorSize(tuple_type->fields[tuple_get_item->index]);
+      end_buf_idx = begin_buf_idx + GetTotalTensorSize(tuple_sinfo->fields[tuple_get_item->index]);
       func_info_.expr2buffers.Set(
           GetRef<Expr>(tuple_get_item),
           {(*it).second.begin() + begin_buf_idx, (*it).second.begin() + end_buf_idx});
@@ -843,7 +847,7 @@ class FusedTIRConstructor : public ExprVisitor {
     if (is_inplace) {
       const auto* attrs = call->attrs.as<CallTIRInplaceAttrs>();
       CHECK(attrs) << "Must have CallTIRInplaceAttrs for an in-place call";
-      output_idxs = std::move(GetInplaceOutputIndices(attrs->inplace_indices, num_inputs));
+      output_idxs = GetInplaceOutputIndices(attrs->inplace_indices, num_inputs);
     } else {
       for (size_t i = 0; i < output_size; i++) {
         output_idxs.push_back(num_inputs + i);
@@ -858,7 +862,7 @@ class FusedTIRConstructor : public ExprVisitor {
 
       // if this is an inplace output, do not do an intermediate allocation
       if (output_idxs[i].IntValue() < num_inputs) {
-        CHECK(input_buffers.defined()) << "Inplace functions must have some defined input";
+        CHECK(input_buffers.has_value()) << "Inplace functions must have some defined input";
         output_buffers.push_back(input_buffers.value()[output_idxs[i].IntValue()]);
         continue;
       }
@@ -902,7 +906,7 @@ class FusedTIRConstructor : public ExprVisitor {
    */
   static void CollectPrimFuncParams(const Var& relax_param,
                                     std::vector<Variant<tir::Var, tir::Buffer>>* out,
-                                    const tvm::runtime::Optional<tir::Buffer>& tir_buffer_param) {
+                                    const Optional<tir::Buffer>& tir_buffer_param) {
     auto struct_info = GetStructInfo(relax_param);
 
     CHECK(!struct_info.as<TupleStructInfoNode>())
@@ -951,8 +955,8 @@ class FusedTIRConstructor : public ExprVisitor {
    * \return The fused TIR
    */
   tir::PrimFunc ConstructFunc() {
-    Map<String, ObjectRef> attr_map;
-    attr_map.Set("tir.noalias", tir::const_true());
+    Map<String, Any> attr_map;
+    attr_map.Set(tir::attr::kNoAlias, true);
     tir::FuseTIRBufferSubstitutor subst(func_info_.buffer_subst_map, func_info_.symbolic_var_remap);
     ICHECK(func_info_.global_name != "fused");
     // Remove output buffers from func_info_.alloc_buffers
@@ -965,7 +969,7 @@ class FusedTIRConstructor : public ExprVisitor {
     tir::Stmt body = tir::BlockNameDeduplicator()(tir::SeqStmt::Flatten(func_info_.bodies));
 
     body = subst.Substitute(body);
-    body = tir::Block({}, {}, {}, "root", std::move(body), NullOpt, alloc_buffers);
+    body = tir::Block({}, {}, {}, "root", std::move(body), std::nullopt, alloc_buffers);
     body = tir::BlockRealize({}, Bool(true), Downcast<tir::Block>(body));
     tir::PrimFunc func(func_info_.params, body, VoidType(), func_info_.buffer_map,
                        DictAttrs(attr_map));
@@ -974,17 +978,17 @@ class FusedTIRConstructor : public ExprVisitor {
   }
 
   /*! \brief Get DynTensor numbers from recursive Tuples. */
-  static size_t GetTotalTensorSize(const Type& type) {
-    if (type.as<DynTensorTypeNode>()) {
+  static size_t GetTotalTensorSize(const StructInfo& sinfo) {
+    if (sinfo.as<TensorStructInfoNode>()) {
       return 1;
-    } else if (const auto* tuple_type = type.as<TupleTypeNode>()) {
+    } else if (const auto* tuple_sinfo = sinfo.as<TupleStructInfoNode>()) {
       size_t num = 0;
-      for (const Type& type : tuple_type->fields) {
-        num += GetTotalTensorSize(type);
+      for (const StructInfo& sinfo : tuple_sinfo->fields) {
+        num += GetTotalTensorSize(sinfo);
       }
       return num;
     } else {
-      LOG(FATAL) << "DynTensorType and TupleType are expect, but got: " << type;
+      LOG(FATAL) << "TensorType and TupleType are expect, but got: " << sinfo;
       return 0;
     }
   }
@@ -1248,7 +1252,7 @@ IRModule FuseTIR(IRModule mod) {
 namespace transform {
 
 Pass FuseTIR() {
-  runtime::TypedPackedFunc<IRModule(IRModule, PassContext)> pass_func =  //
+  auto pass_func =  //
       [=](IRModule m, PassContext pc) { return relax::FuseTIR(m); };
   auto inner_pass = CreateModulePass(/*pass_function=*/pass_func,   //
                                      /*opt_level=*/0,               //
@@ -1264,7 +1268,10 @@ Pass FuseTIR() {
       "FuseTIR");
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.FuseTIR").set_body_typed(FuseTIR);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.transform.FuseTIR", FuseTIR);
+});
 
 }  // namespace transform
 

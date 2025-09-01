@@ -23,7 +23,7 @@ namespace script {
 namespace printer {
 
 TVM_STATIC_IR_FUNCTOR(IRDocsifier, vtable)
-    .set_dispatch<tir::For>("", [](tir::For loop, ObjectPath loop_p, IRDocsifier d) -> Doc {
+    .set_dispatch<tir::For>("", [](tir::For loop, AccessPath loop_p, IRDocsifier d) -> Doc {
       // Step 1. Check syntactic sugar: `T.grid`
       std::vector<const tir::ForNode*> grid;
       std::unordered_set<const tir::VarNode*> grid_loop_vars;
@@ -65,10 +65,10 @@ TVM_STATIC_IR_FUNCTOR(IRDocsifier, vtable)
       }
       // Step 3. If not `T.grid`, print loop kind accordingly
       ExprDoc lhs = DefineVar(loop->loop_var, *f, d);
-      Optional<ExprDoc> min = NullOpt;
-      Optional<ExprDoc> max = NullOpt;
-      Optional<ExprDoc> annotations = NullOpt;
-      Optional<ExprDoc> thread = NullOpt;
+      Optional<ExprDoc> min = std::nullopt;
+      Optional<ExprDoc> max = std::nullopt;
+      Optional<ExprDoc> annotations = std::nullopt;
+      Optional<ExprDoc> thread = std::nullopt;
       if (tir::is_zero(loop->min)) {
         max = d->AsDoc<ExprDoc>(loop->extent, loop_p->Attr("extent"));
       } else {

@@ -58,7 +58,7 @@ constexpr int kInvalidDeviceType = -1;
  * \brief Describes at compile time the constraints on where data is to be stored at runtime
  * down to the (virtual) device and memory scope level, and how to compile code to compute that
  * data. Used by the \p PlanDevices pass to collect and solve (virtual) device constraints for
- * the whole Relay program.
+ * the whole Relax program.
  *
  * Is a quadruple of:
  * - A \p device_type (\p DLDeviceType). May be \p kInvalidDeviceType if unconstrained.
@@ -76,14 +76,10 @@ constexpr int kInvalidDeviceType = -1;
  * device_type must equal \p target->GetTargetDeviceType().
  *
  * Note that currently we assume if a function returns its result on a particular (virtual) device
- * then the function body is also executed on that device. See the overview comment in
- * src/relay/transforms/device_planner.cc for more details.
+ * then the function body is also executed on that device.
  *
- * By 'data' we include both tensors and additional supporting datastructures such as shapes,
- * Relay ADT items (including tuples), Relay references, and Relay closures. Typically non-tensor
- * data must reside on a 'CPU'-like host device with good support for scalars.
  *
- * By 'execution' we include both (fused) primitive operators, and all the Relay expressions
+ * By 'execution' we include both (fused) primitive operators, and all the Relax expressions
  * surrounding them which coordinates data and control flow. Again, typically non-primitive
  * operators must be executed on a 'CPU'-like device with good support for control flow.
  *
@@ -173,7 +169,7 @@ constexpr int kInvalidDeviceType = -1;
  * These operations are needed during device planning.
  */
 
-class VirtualDeviceNode : public AttrsNode<VirtualDeviceNode> {
+class VirtualDeviceNode : public AttrsNodeReflAdapter<VirtualDeviceNode> {
  private:
   /*!
    * \brief The \p DLDeviceType (represented as an int) of the virtual device. If \p target is
@@ -247,20 +243,23 @@ class VirtualDeviceNode : public AttrsNode<VirtualDeviceNode> {
     return device;
   }
 
-  TVM_DECLARE_ATTRS(VirtualDeviceNode, "VirtualDevice") {
-    TVM_ATTR_FIELD(device_type_int)
-        .describe("The type of the virtual device.")
-        .set_default(kInvalidDeviceType);
-    TVM_ATTR_FIELD(virtual_device_id)
-        .describe("The device id of the virtual device.")
-        .set_default(-1);
-    TVM_ATTR_FIELD(target)
-        .describe("The target describing how to compile for the virtual device.")
-        .set_default(Target());
-    TVM_ATTR_FIELD(memory_scope)
-        .describe("The area of memory w.r.t. the virtual device where data is stored.")
-        .set_default("");
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<VirtualDeviceNode>()
+        .def_ro("device_type_int", &VirtualDeviceNode::device_type_int,
+                "The type of the virtual device.", refl::DefaultValue(kInvalidDeviceType))
+        .def_ro("virtual_device_id", &VirtualDeviceNode::virtual_device_id,
+                "The device id of the virtual device.", refl::DefaultValue(-1))
+        .def_ro("target", &VirtualDeviceNode::target,
+                "The target describing how to compile for the virtual device.",
+                refl::DefaultValue(Target()))
+        .def_ro("memory_scope", &VirtualDeviceNode::memory_scope,
+                "The area of memory w.r.t. the virtual device where data is stored.",
+                refl::DefaultValue(""));
   }
+
+  static constexpr const char* _type_key = "target.VirtualDevice";
+  TVM_FFI_DECLARE_FINAL_OBJECT_INFO(VirtualDeviceNode, BaseAttrsNode);
 
   friend class VirtualDevice;
 };

@@ -31,6 +31,7 @@
 #ifndef TVM_TIR_BLOCK_DEPENDENCE_INFO_H_
 #define TVM_TIR_BLOCK_DEPENDENCE_INFO_H_
 
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/tir/block_scope.h>
 
 #include <unordered_map>
@@ -53,20 +54,23 @@ namespace tir {
 class BlockDependenceInfoNode : public Object {
  public:
   /*!
-   * \brief Mapping from a block sref to its correpsonding BlockScope,
+   * \brief Mapping from a block sref to its corresponding BlockScope,
    * tracking the dependency inside the block scope,
    */
   std::unordered_map<StmtSRef, BlockScope, ObjectPtrHash, ObjectPtrEqual> sref2scope;
   /*! \brief The reverse mapping from block/for-loop to their corresponding srefs */
   std::unordered_map<const StmtNode*, StmtSRef> stmt2ref;
 
-  void VisitAttrs(AttrVisitor* v) {}
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<BlockDependenceInfoNode>();
+  }
 
   static constexpr const char* _type_key = "tir.BlockDependenceInfo";
   TVM_DECLARE_FINAL_OBJECT_INFO(BlockDependenceInfoNode, Object);
 
   /*!
-   * \brief Get the BlockScope correpsonding to the sref of scope root block
+   * \brief Get the BlockScope corresponding to the sref of scope root block
    * \param scope_root The block sref to be retrieved
    * \return The corresponding BlockScope
    */

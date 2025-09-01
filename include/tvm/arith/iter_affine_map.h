@@ -49,6 +49,7 @@
 #define TVM_ARITH_ITER_AFFINE_MAP_H_
 
 #include <tvm/arith/analyzer.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/ir/diagnostic.h>
 #include <tvm/ir/expr.h>
 #include <tvm/tir/var.h>
@@ -65,11 +66,8 @@ namespace arith {
  */
 class IterMapExprNode : public PrimExprNode {
  public:
-  // overrides
-  void VisitAttrs(tvm::AttrVisitor* v) {}
-
   static constexpr const char* _type_key = "arith.IterMapExpr";
-  static constexpr const uint32_t _type_child_slots = 3;
+  static constexpr const uint32_t _type_child_slots = 2;
   TVM_DECLARE_BASE_OBJECT_INFO(IterMapExprNode, PrimExprNode);
 };
 
@@ -100,25 +98,15 @@ class IterMarkNode : public Object {
    */
   PrimExpr extent;
 
-  // overrides
-  void VisitAttrs(tvm::AttrVisitor* v) {
-    v->Visit("source", &source);
-    v->Visit("extent", &extent);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<IterMarkNode>()
+        .def_ro("source", &IterMarkNode::source)
+        .def_ro("extent", &IterMarkNode::extent);
   }
 
-  bool SEqualReduce(const IterMarkNode* other, SEqualReducer equal) const {
-    equal->MarkGraphNode();
-    return equal(source, other->source) && equal(extent, other->extent);
-  }
+  static constexpr TVMFFISEqHashKind _type_s_eq_hash_kind = kTVMFFISEqHashKindDAGNode;
 
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce->MarkGraphNode();
-    hash_reduce(source);
-    hash_reduce(extent);
-  }
-
-  static constexpr const bool _type_has_method_sequal_reduce = true;
-  static constexpr const bool _type_has_method_shash_reduce = true;
   static constexpr const char* _type_key = "arith.IterMark";
   TVM_DECLARE_FINAL_OBJECT_INFO(IterMarkNode, Object);
 };
@@ -156,26 +144,16 @@ class IterSplitExprNode : public IterMapExprNode {
   /*! \brief Additional scale. */
   PrimExpr scale;
 
-  // overrides
-  void VisitAttrs(tvm::AttrVisitor* v) {
-    v->Visit("source", &source);
-    v->Visit("lower_factor", &lower_factor);
-    v->Visit("extent", &extent);
-    v->Visit("scale", &scale);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<IterSplitExprNode>()
+        .def_ro("source", &IterSplitExprNode::source)
+        .def_ro("lower_factor", &IterSplitExprNode::lower_factor)
+        .def_ro("extent", &IterSplitExprNode::extent)
+        .def_ro("scale", &IterSplitExprNode::scale);
   }
 
-  bool SEqualReduce(const IterSplitExprNode* other, SEqualReducer equal) const {
-    return equal(source, other->source) && equal(lower_factor, other->lower_factor) &&
-           equal(extent, other->extent) && equal(scale, other->scale);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(source);
-    hash_reduce(lower_factor);
-    hash_reduce(extent);
-    hash_reduce(scale);
-  }
-
+  static constexpr TVMFFISEqHashKind _type_s_eq_hash_kind = kTVMFFISEqHashKindTreeNode;
   static constexpr const char* _type_key = "arith.IterSplitExpr";
   TVM_DECLARE_FINAL_OBJECT_INFO(IterSplitExprNode, IterMapExprNode);
 };
@@ -223,21 +201,14 @@ class IterSumExprNode : public IterMapExprNode {
   /*! \brief The base offset. */
   PrimExpr base;
 
-  // overrides
-  void VisitAttrs(tvm::AttrVisitor* v) {
-    v->Visit("args", &args);
-    v->Visit("base", &base);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<IterSumExprNode>()
+        .def_ro("args", &IterSumExprNode::args)
+        .def_ro("base", &IterSumExprNode::base);
   }
 
-  bool SEqualReduce(const IterSumExprNode* other, SEqualReducer equal) const {
-    return equal(args, other->args) && equal(base, other->base);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(args);
-    hash_reduce(base);
-  }
-
+  static constexpr TVMFFISEqHashKind _type_s_eq_hash_kind = kTVMFFISEqHashKindTreeNode;
   static constexpr const char* _type_key = "arith.IterSumExpr";
   TVM_DECLARE_FINAL_OBJECT_INFO(IterSumExprNode, IterMapExprNode);
 };
@@ -291,11 +262,12 @@ class IterMapResultNode : public Object {
    */
   PrimExpr padding_predicate;
 
-  // overrides
-  void VisitAttrs(tvm::AttrVisitor* v) {
-    v->Visit("errors", &errors);
-    v->Visit("indices", &indices);
-    v->Visit("padding_predicate", &padding_predicate);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<IterMapResultNode>()
+        .def_ro("indices", &IterMapResultNode::indices)
+        .def_ro("errors", &IterMapResultNode::errors)
+        .def_ro("padding_predicate", &IterMapResultNode::padding_predicate);
   }
 
   static constexpr const char* _type_key = "arith.IterMapResult";

@@ -23,11 +23,15 @@
 
 #include "utils.h"
 
+#include <tvm/ffi/reflection/registry.h>
+
 #include <algorithm>
 #include <string>
 namespace tvm {
 namespace contrib {
 namespace msc {
+
+using namespace tvm::relax;
 
 size_t CommonUtils::GetIndex(int index, size_t max_size) {
   size_t v_index;
@@ -104,6 +108,7 @@ const String CommonUtils::ToAttrKey(const String& key) {
     return msc_attr::kConsumerType;
   }
   LOG_FATAL << "Unexpected key " << key;
+  TVM_FFI_UNREACHABLE();
 }
 
 bool StringUtils::Contains(const String& src_string, const String& sub_string) {
@@ -257,30 +262,26 @@ const String StringUtils::Lower(const String& src_string) {
   return str;
 }
 
-const String StringUtils::ToString(const runtime::ObjectRef& obj) {
+const String StringUtils::ToString(const ffi::Any& obj) {
   String obj_string;
-  if (!obj.defined()) {
+  if (obj == nullptr) {
     obj_string = "";
-  } else if (obj.as<StringObj>()) {
-    obj_string = Downcast<String>(obj);
-  } else if (const auto* n = obj.as<runtime::Int::ContainerType>()) {
-    obj_string = std::to_string(n->value);
-  } else if (const auto* n = obj.as<runtime::Float::ContainerType>()) {
-    obj_string = std::to_string(n->value);
+  } else if (auto opt_str = obj.as<String>()) {
+    obj_string = *opt_str;
   } else if (const auto* n = obj.as<IntImmNode>()) {
     obj_string = std::to_string(n->value);
   } else if (const auto* n = obj.as<FloatImmNode>()) {
     obj_string = std::to_string(n->value);
-  } else if (const auto* n = obj.as<ArrayNode>()) {
+  } else if (const auto* n = obj.as<ffi::ArrayObj>()) {
     for (size_t i = 0; i < n->size(); i++) {
-      obj_string = obj_string + ToString((*n)[i]);
+      obj_string = obj_string + ToString((*n)[i].cast<ObjectRef>());
       if (n->size() == 1 || i < n->size() - 1) {
         obj_string = obj_string + ",";
       }
     }
-  } else if (const auto* n = obj.as<relax::PrimValueNode>()) {
+  } else if (const auto* n = obj.as<PrimValueNode>()) {
     obj_string = ToString(n->value);
-  } else if (const auto* n = obj.as<relax::TupleNode>()) {
+  } else if (const auto* n = obj.as<TupleNode>()) {
     obj_string = ToString(n->fields);
   } else {
     std::ostringstream obj_des;
@@ -370,7 +371,7 @@ const Span SpanUtils::SetAttr(const Span& span, const String& key, const String&
   return Span(SourceName::Get(new_source), 0, 0, 0, 0);
 }
 
-const String SpanUtils::GetAttr(const Span& span, const String& key) {
+String SpanUtils::GetAttr(const Span& span, const String& key) {
   if (span.defined() && span->source_name.defined()) {
     Array<String> tokens{"<" + key + ">", "</" + key + ">"};
     return StringUtils::GetClosureOnce(span->source_name->name, tokens[0], tokens[1]);
@@ -489,14 +490,9 @@ const Array<String> ExprUtils::GetInputTypes(const String& optype, size_t inputs
   return input_types;
 }
 
-const Array<String> ExprUtils::GetInputTypes(const RelaxCall& call) {
+const Array<String> ExprUtils::GetInputTypes(const Call& call) {
   const String& optype = StringUtils::Replace(Downcast<Op>(call->op)->name, "relax.", "");
   return GetInputTypes(optype, call->args.size(), true);
-}
-
-const Array<String> ExprUtils::GetInputTypes(const RelayCall& call) {
-  const String& optype = StringUtils::Replace(Downcast<Op>(call->op)->name, "relay.", "");
-  return GetInputTypes(optype, call->args.size(), false);
 }
 
 const String ExprUtils::GetSpanName(const Expr& expr, const String& suffix) {
@@ -507,7 +503,7 @@ const String ExprUtils::GetSpanName(const Expr& expr, const String& suffix) {
   return name;
 }
 
-const Array<PrimExpr> ExprUtils::GetShape(const relax::TensorStructInfo& sinfo, bool as_int) {
+const Array<PrimExpr> ExprUtils::GetShape(const TensorStructInfo& sinfo, bool as_int) {
   const auto& shape_opt = sinfo->GetShape();
   if (!shape_opt.defined()) {
     return Array<PrimExpr>();
@@ -523,35 +519,33 @@ const Array<PrimExpr> ExprUtils::GetShape(const relax::TensorStructInfo& sinfo, 
 }
 
 const Array<PrimExpr> ExprUtils::GetShape(const Expr& expr, bool as_int) {
-  return GetShape(Downcast<relax::TensorStructInfo>(relax::GetStructInfo(expr)), as_int);
+  return GetShape(Downcast<TensorStructInfo>(GetStructInfo(expr)), as_int);
 }
 
 const DataType ExprUtils::GetDataType(const Expr& expr) {
-  return Downcast<relax::TensorStructInfo>(relax::GetStructInfo(expr))->dtype;
+  return Downcast<TensorStructInfo>(GetStructInfo(expr))->dtype;
 }
 
-TVM_REGISTER_GLOBAL("msc.core.SpanGetAttr").set_body_typed(SpanUtils::GetAttr);
-
-TVM_REGISTER_GLOBAL("msc.core.SpanGetAttrs").set_body_typed(SpanUtils::GetAttrs);
-
-TVM_REGISTER_GLOBAL("msc.core.SpanCreateWithAttr")
-    .set_body_typed([](const String& key, const String& value) -> Span {
-      return SpanUtils::CreateWithAttr(key, value);
-    });
-
-TVM_REGISTER_GLOBAL("msc.core.SpanSetAttr")
-    .set_body_typed([](const Span& span, const String& key, const String& value) -> Span {
-      return SpanUtils::SetAttr(span, key, value);
-    });
-
-TVM_REGISTER_GLOBAL("msc.core.CompareVersion")
-    .set_body_typed([](const Array<Integer>& given_version,
-                       const Array<Integer>& target_version) -> Integer {
-      return Integer(CommonUtils::CompareVersion(given_version, target_version));
-    });
-
-TVM_REGISTER_GLOBAL("msc.core.ToAttrKey").set_body_typed([](const String& key) -> String {
-  return CommonUtils::ToAttrKey(key);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef()
+      .def("msc.core.SpanGetAttr", SpanUtils::GetAttr)
+      .def("msc.core.SpanGetAttrs", SpanUtils::GetAttrs)
+      .def("msc.core.SpanCreateWithAttr",
+           [](const String& key, const String& value) -> Span {
+             return SpanUtils::CreateWithAttr(key, value);
+           })
+      .def("msc.core.SpanSetAttr",
+           [](const Span& span, const String& key, const String& value) -> Span {
+             return SpanUtils::SetAttr(span, key, value);
+           })
+      .def(
+          "msc.core.CompareVersion",
+          [](const Array<Integer>& given_version, const Array<Integer>& target_version) -> Integer {
+            return Integer(CommonUtils::CompareVersion(given_version, target_version));
+          })
+      .def("msc.core.ToAttrKey",
+           [](const String& key) -> String { return CommonUtils::ToAttrKey(key); });
 });
 
 }  // namespace msc

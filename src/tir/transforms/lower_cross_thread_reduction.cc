@@ -21,6 +21,7 @@
  * \file lower_cross_thread_reduction.cc
  */
 #include <tvm/arith/analyzer.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/tir/analysis.h>
 #include <tvm/tir/stmt_functor.h>
 #include <tvm/tir/transform.h>
@@ -255,9 +256,10 @@ class InThreadReducerMaker : private StmtMutator {
         if (!res->body.defined() || collector.CheckHasReductionBlocks(res)) {
           return res->body;
         }
-        return std::move(res);
+        return res;
+
       } else {
-        return std::move(res);
+        return res;
       }
     } else {
       return Stmt{nullptr};
@@ -312,7 +314,7 @@ Stmt TransformReductionBlock(const BlockRealizeNode* realize,            //
   };
 
   Array<BufferRegion> ct_buffer_regions = f_create_buffer_regions(ct_buffers);
-  Optional<Array<BufferRegion>> it_buffer_regions = NullOpt;
+  Optional<Array<BufferRegion>> it_buffer_regions = std::nullopt;
   if (it_buffers.defined()) {
     it_buffer_regions = f_create_buffer_regions(it_buffers.value());
   }
@@ -342,7 +344,7 @@ Stmt TransformReductionBlock(const BlockRealizeNode* realize,            //
   }
   // Stmt 2: do in-thread reduction
   {
-    Optional<BlockRealize> new_realize = NullOpt;
+    Optional<BlockRealize> new_realize = std::nullopt;
     // If need to generate in-thread reduction,
     // then replace `wb_buffers` with `it_buffers` accordingly in given BlockRealize
     // otherwise, directly remove given BlockRealize
@@ -353,7 +355,7 @@ Stmt TransformReductionBlock(const BlockRealizeNode* realize,            //
       new_block->name_hint = new_block->name_hint + "_in_thread";
       new_block->body =
           BufferReplacer::Run(wb_buffers, it_buffers.value(), std::move(new_block->body));
-      new_block->init = NullOpt;
+      new_block->init = std::nullopt;
       ObjectPtr<BlockRealizeNode> n = make_object<BlockRealizeNode>(*realize);
       n->block = Block(new_block);
       new_realize = BlockRealize(n);
@@ -673,9 +675,9 @@ class CrossThreadReductionTransformer : public StmtMutator {
     Array<PrimExpr> combiner_lhs{nullptr};
     Array<PrimExpr> combiner_rhs{nullptr};
     std::tie(init_values, updates) =
-        GetInitValuesAndUpdatesFromReductionBlock(NullOpt, GetRef<Block>(block));
+        GetInitValuesAndUpdatesFromReductionBlock(std::nullopt, GetRef<Block>(block));
     std::tie(reducer, combiner_lhs, combiner_rhs) =
-        GetReducerAndCombinerLhsRhs(NullOpt, init_values, updates);
+        GetReducerAndCombinerLhsRhs(std::nullopt, init_values, updates);
 
     // Condition 4. All reduction buffers should be all local or all non-local.
     int is_local_buf = -1;
@@ -788,7 +790,7 @@ class CrossThreadReductionTransformer : public StmtMutator {
         }
       }
     }
-    return std::move(new_block);
+    return new_block;
   }
 
   void MakeCrossThreadReduction(const BlockRealizeNode* realize,
@@ -815,7 +817,7 @@ class CrossThreadReductionTransformer : public StmtMutator {
     Array<Buffer>& new_buffers = block2new_buffers_[block_stack_.back()];
     Array<Buffer> ct_buffers = MakeScratchpads(reduction_buffers, /*is_cross_thread_buffer=*/true);
     new_buffers.insert(new_buffers.end(), ct_buffers.begin(), ct_buffers.end());
-    Optional<Array<Buffer>> it_buffers = NullOpt;
+    Optional<Array<Buffer>> it_buffers = std::nullopt;
     if (need_in_thread_reduction) {
       it_buffers = MakeScratchpads(reduction_buffers, /*is_cross_thread_buffer=*/false);
       new_buffers.insert(new_buffers.end(), it_buffers.value().begin(), it_buffers.value().end());
@@ -920,14 +922,9 @@ class CrossThreadReductionTransformer : public StmtMutator {
 };
 
 PrimFunc LowerCrossThreadReduction(PrimFunc f) {
-  // Only apply this pass to TIR that is not from TE schedules
-  if (!IsFromLegacyTESchedule(f)) {
-    PrimFuncNode* fptr = f.CopyOnWrite();
-    fptr->body = CrossThreadReductionTransformer()(f->body);
-    return f;
-  } else {
-    return f;
-  }
+  PrimFuncNode* fptr = f.CopyOnWrite();
+  fptr->body = CrossThreadReductionTransformer()(f->body);
+  return f;
 }
 
 namespace transform {
@@ -939,8 +936,10 @@ Pass LowerCrossThreadReduction() {
   return CreatePrimFuncPass(pass_func, 0, "tir.LowerCrossThreadReduction", {});
 }
 
-TVM_REGISTER_GLOBAL("tir.transform.LowerCrossThreadReduction")
-    .set_body_typed(LowerCrossThreadReduction);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("tir.transform.LowerCrossThreadReduction", LowerCrossThreadReduction);
+});
 
 }  // namespace transform
 

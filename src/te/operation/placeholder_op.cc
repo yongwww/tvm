@@ -21,11 +21,15 @@
  * \brief Placeholder op.
  * \file placeholder_op.cc
  */
-#include <tvm/runtime/registry.h>
+#include <tvm/ffi/container/variant.h>
+#include <tvm/ffi/function.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/te/operation.h>
 
 namespace tvm {
 namespace te {
+
+TVM_FFI_STATIC_INIT_BLOCK({ PlaceholderOpNode::RegisterReflection(); });
 
 // PlaceholderOpNode
 TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
@@ -34,11 +38,7 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
       p->stream << "placeholder(" << op->name << ", " << op << ")";
     });
 
-TVM_REGISTER_NODE_TYPE(PlaceholderOpNode);
-
 int PlaceholderOpNode::num_outputs() const { return 1; }
-
-Array<IterVar> PlaceholderOpNode::root_iter_vars() const { return {}; }
 
 DataType PlaceholderOpNode::output_dtype(size_t i) const {
   ICHECK_EQ(i, 0U);
@@ -62,47 +62,24 @@ Tensor placeholder(Array<PrimExpr> shape, DataType dtype, std::string name) {
   return PlaceholderOp(name, shape, dtype).output(0);
 }
 
-TVM_REGISTER_GLOBAL("te.Placeholder")
-    .set_body_typed([](Variant<PrimExpr, Array<PrimExpr>> shape_arg, DataType dtype,
-                       std::string name) {
-      auto shape = [&]() -> Array<PrimExpr> {
-        if (auto arg_expr = shape_arg.as<PrimExpr>()) {
-          return {arg_expr.value()};
-        } else if (auto arg_array = shape_arg.as<Array<PrimExpr>>()) {
-          return arg_array.value();
-        } else {
-          LOG(FATAL) << "Variant did not contain either allowed type";
-        }
-      }();
-      return placeholder(shape, dtype, name);
-    });
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("te.Placeholder", [](Variant<PrimExpr, Array<PrimExpr>> shape_arg,
+                                             DataType dtype, std::string name) {
+    auto shape = [&]() -> Array<PrimExpr> {
+      if (auto arg_expr = shape_arg.as<PrimExpr>()) {
+        return {arg_expr.value()};
+      } else if (auto arg_array = shape_arg.as<Array<PrimExpr>>()) {
+        return arg_array.value();
+      } else {
+        LOG(FATAL) << "Variant did not contain either allowed type";
+      }
+    }();
+    return placeholder(shape, dtype, name);
+  });
+});
 
 Array<Tensor> PlaceholderOpNode::InputTensors() const { return {}; }
 
-Operation PlaceholderOpNode::ReplaceInputs(const Operation& self,
-                                           const std::unordered_map<Tensor, Tensor>& rmap) const {
-  return self;
-}
-
-void PlaceholderOpNode::PropBoundToInputs(
-    const Operation& self, arith::Analyzer* analyzer,
-    const std::unordered_map<const VarNode*, IntSet>& dom_map,
-    std::unordered_map<Tensor, TensorDom>* out_dom_map) const {}
-
-void PlaceholderOpNode::GatherBound(const Operation& self,
-                                    const std::unordered_map<Tensor, TensorDom>& tensor_dom,
-                                    std::unordered_map<IterVar, Range>* out_dom_map) const {}
-
-Stmt PlaceholderOpNode::BuildRealize(const Stage& stage,
-                                     const std::unordered_map<IterVar, Range>& realize_map,
-                                     const Stmt& body, String storage_scope) const {
-  return body;
-}
-
-Stmt PlaceholderOpNode::BuildProvide(const Stage& stage,
-                                     const std::unordered_map<IterVar, Range>& dom_map,
-                                     bool debug_keep_trivial_loop) const {
-  return Stmt();
-}
 }  // namespace te
 }  // namespace tvm

@@ -19,9 +19,9 @@
 from enum import IntEnum
 from typing import Optional, Union, List
 import tvm
-from tvm.runtime import Object
+import tvm_ffi
 from tvm.runtime.container import ShapeTuple
-from .vm_build import Executable
+from .vm_build import VMExecutable
 from . import _ffi_api
 
 
@@ -56,8 +56,8 @@ class VMFuncScope(object):
         self.exit_callback()
 
 
-@tvm._ffi.register_object("relax.ExecBuilder")
-class ExecBuilder(Object):
+@tvm_ffi.register_object("relax.ExecBuilder")
+class ExecBuilder(tvm_ffi.core.Object):
     """A builder to emit instructions and build executable for the virtual machine."""
 
     def __init__(self) -> None:
@@ -87,7 +87,7 @@ class ExecBuilder(Object):
 
     def declare_function(self, func_name: str, kind: VMFuncKind = VMFuncKind.PACKED_FUNC) -> None:
         """Declare a function"""
-        _ffi_api.ExecBuilderDecalreFunction(self, func_name, kind)  # type: ignore
+        _ffi_api.ExecBuilderDeclareFunction(self, func_name, kind)  # type: ignore
 
     def function(
         self, func_name: str, num_inputs: Optional[int] = 0, param_names: List[str] = None
@@ -142,6 +142,6 @@ class ExecBuilder(Object):
         self._check_scope()
         _ffi_api.ExecBuilderEmitIf(self, cond, false_offset)  # type: ignore
 
-    def get(self) -> Executable:
+    def get(self) -> VMExecutable:
         """return the executable"""
-        return Executable(_ffi_api.ExecBuilderGet(self))  # type: ignore
+        return VMExecutable(_ffi_api.ExecBuilderGet(self))  # type: ignore

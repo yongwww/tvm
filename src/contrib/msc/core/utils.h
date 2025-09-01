@@ -27,7 +27,6 @@
 #include <tvm/ir/source_map.h>
 #include <tvm/relax/expr.h>
 #include <tvm/relax/struct_info.h>
-#include <tvm/relay/expr.h>
 
 #include <string>
 #include <tuple>
@@ -37,9 +36,8 @@ namespace tvm {
 namespace contrib {
 namespace msc {
 
-using Expr = tvm::RelayExpr;
-using RelaxCall = tvm::relax::Call;
-using RelayCall = tvm::relay::Call;
+using namespace tvm::relax;
+using Expr = tvm::RelaxExpr;
 
 namespace msc_attr {
 /*! \brief Mark the name for the expr. */
@@ -175,7 +173,7 @@ class StringUtils {
    * \brief Change Object to String.
    * \return The String.
    */
-  TVM_DLL static const String ToString(const runtime::ObjectRef& obj);
+  TVM_DLL static const String ToString(const ffi::Any& obj);
 };
 
 /*!
@@ -223,11 +221,7 @@ class ArrayUtils {
   TVM_DLL static const Array<T> Cast(const Array<PrimExpr>& src_array) {
     Array<T> new_array;
     for (const auto& s : src_array) {
-      if (s->IsInstance<tvm::tir::AnyNode>()) {
-        new_array.push_back(T(-1));
-      } else {
-        new_array.push_back(Downcast<T>(s));
-      }
+      new_array.push_back(Downcast<T>(s));
     }
     return new_array;
   }
@@ -293,7 +287,7 @@ class SpanUtils {
    * \brief Get the value in <key>value</key> from the Span.
    * \return The value String.
    */
-  TVM_DLL static const String GetAttr(const Span& span, const String& key);
+  TVM_DLL static String GetAttr(const Span& span, const String& key);
 
   /*!
    * \brief Get all the key:value in format <key>value</key> from the Span.
@@ -324,13 +318,7 @@ class ExprUtils {
    * \brief Get the input types of call.
    * \return The input types.
    */
-  TVM_DLL static const Array<String> GetInputTypes(const RelaxCall& call);
-
-  /*!
-   * \brief Get the input types of call.
-   * \return The input types.
-   */
-  TVM_DLL static const Array<String> GetInputTypes(const RelayCall& call);
+  TVM_DLL static const Array<String> GetInputTypes(const Call& call);
 
   /*!
    * \brief Get the scalar value of ndarray.
@@ -375,16 +363,7 @@ class ExprUtils {
    * \return The scalar value.
    */
   template <typename T>
-  TVM_DLL static const T GetScalar(const relax::Constant& constant, size_t i = 0) {
-    return GetScalar<T>(constant->data, i);
-  }
-
-  /*!
-   * \brief Get the scalar value of relay constant.
-   * \return The scalar value.
-   */
-  template <typename T>
-  TVM_DLL static const T GetScalar(const relay::Constant& constant, size_t i = 0) {
+  TVM_DLL static const T GetScalar(const Constant& constant, size_t i = 0) {
     return GetScalar<T>(constant->data, i);
   }
 
@@ -398,8 +377,7 @@ class ExprUtils {
    * \brief Get shape of expr.
    * \return The shape.
    */
-  TVM_DLL static const Array<PrimExpr> GetShape(const relax::TensorStructInfo& sinfo,
-                                                bool as_int = true);
+  TVM_DLL static const Array<PrimExpr> GetShape(const TensorStructInfo& sinfo, bool as_int = true);
   TVM_DLL static const Array<PrimExpr> GetShape(const Expr& expr, bool as_int = true);
 
   /*!

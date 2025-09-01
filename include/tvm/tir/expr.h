@@ -25,13 +25,13 @@
 #ifndef TVM_TIR_EXPR_H_
 #define TVM_TIR_EXPR_H_
 
+#include <tvm/ffi/container/array.h>
+#include <tvm/ffi/container/map.h>
+#include <tvm/ffi/string.h>
 #include <tvm/ir/expr.h>
 #include <tvm/node/functor.h>
 #include <tvm/node/node.h>
-#include <tvm/runtime/c_runtime_api.h>
-#include <tvm/runtime/container/array.h>
-#include <tvm/runtime/container/map.h>
-#include <tvm/runtime/container/string.h>
+#include <tvm/runtime/base.h>
 #include <tvm/runtime/data_type.h>
 #include <tvm/tir/buffer.h>
 #include <tvm/tir/var.h>
@@ -55,17 +55,10 @@ class StringImmNode : public PrimExprNode {
   /*! \brief The constant value content. */
   String value;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("dtype", &dtype);
-    v->Visit("value", &value);
-    v->Visit("span", &span);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<StringImmNode>().def_ro("value", &StringImmNode::value);
   }
-
-  bool SEqualReduce(const StringImmNode* other, SEqualReducer equal) const {
-    return equal(value, other->value);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const { hash_reduce(value); }
 
   static constexpr const char* _type_key = "tir.StringImm";
   TVM_DECLARE_FINAL_OBJECT_INFO(StringImmNode, PrimExprNode);
@@ -91,19 +84,9 @@ class CastNode : public PrimExprNode {
   /*! \brief Original data type. */
   PrimExpr value;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("dtype", &dtype);
-    v->Visit("value", &value);
-    v->Visit("span", &span);
-  }
-
-  bool SEqualReduce(const CastNode* other, SEqualReducer equal) const {
-    return equal(dtype, other->dtype) && equal(value, other->value);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(dtype);
-    hash_reduce(value);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<CastNode>().def_ro("value", &CastNode::value);
   }
 
   static constexpr const char* _type_key = "tir.Cast";
@@ -133,21 +116,9 @@ class BinaryOpNode : public PrimExprNode {
   /*! \brief The right operand. */
   PrimExpr b;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("dtype", &(this->dtype));
-    v->Visit("a", &a);
-    v->Visit("b", &b);
-    v->Visit("span", &span);
-  }
-
-  bool SEqualReduce(const T* other, SEqualReducer equal) const {
-    return equal(dtype, other->dtype) && equal(a, other->a) && equal(b, other->b);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(dtype);
-    hash_reduce(a);
-    hash_reduce(b);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<T>().def_ro("a", &T::a).def_ro("b", &T::b);
   }
 
   TVM_DECLARE_FINAL_OBJECT_INFO(T, PrimExprNode);
@@ -183,6 +154,7 @@ class SubNode : public BinaryOpNode<SubNode> {
 class Sub : public PrimExpr {
  public:
   TVM_DLL Sub(PrimExpr a, PrimExpr b, Span span = Span());
+
   TVM_DEFINE_OBJECT_REF_METHODS(Sub, PrimExpr, SubNode);
   TVM_DEFINE_OBJECT_REF_COW_METHOD(SubNode);
 };
@@ -324,21 +296,9 @@ class CmpOpNode : public PrimExprNode {
   /*! \brief The right operand. */
   PrimExpr b;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("dtype", &(this->dtype));
-    v->Visit("a", &a);
-    v->Visit("b", &b);
-    v->Visit("span", &span);
-  }
-
-  bool SEqualReduce(const T* other, SEqualReducer equal) const {
-    return equal(dtype, other->dtype) && equal(a, other->a) && equal(b, other->b);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(dtype);
-    hash_reduce(a);
-    hash_reduce(b);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<T>().def_ro("a", &T::a).def_ro("b", &T::b);
   }
 
   TVM_DECLARE_FINAL_OBJECT_INFO(T, PrimExprNode);
@@ -454,21 +414,9 @@ class AndNode : public PrimExprNode {
   /*! \brief The right operand. */
   PrimExpr b;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("dtype", &(this->dtype));
-    v->Visit("a", &a);
-    v->Visit("b", &b);
-    v->Visit("span", &span);
-  }
-
-  bool SEqualReduce(const AndNode* other, SEqualReducer equal) const {
-    return equal(dtype, other->dtype) && equal(a, other->a) && equal(b, other->b);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(dtype);
-    hash_reduce(a);
-    hash_reduce(b);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<AndNode>().def_ro("a", &AndNode::a).def_ro("b", &AndNode::b);
   }
 
   static constexpr const char* _type_key = "tir.And";
@@ -494,21 +442,9 @@ class OrNode : public PrimExprNode {
   /*! \brief The right operand. */
   PrimExpr b;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("dtype", &dtype);
-    v->Visit("a", &a);
-    v->Visit("b", &b);
-    v->Visit("span", &span);
-  }
-
-  bool SEqualReduce(const OrNode* other, SEqualReducer equal) const {
-    return equal(dtype, other->dtype) && equal(a, other->a) && equal(b, other->b);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(dtype);
-    hash_reduce(a);
-    hash_reduce(b);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<OrNode>().def_ro("a", &OrNode::a).def_ro("b", &OrNode::b);
   }
 
   static constexpr const char* _type_key = "tir.Or";
@@ -532,19 +468,9 @@ class NotNode : public PrimExprNode {
   /*! \brief The input operand. */
   PrimExpr a;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("dtype", &dtype);
-    v->Visit("a", &a);
-    v->Visit("span", &span);
-  }
-
-  bool SEqualReduce(const NotNode* other, SEqualReducer equal) const {
-    return equal(dtype, other->dtype) && equal(a, other->a);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(dtype);
-    hash_reduce(a);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<NotNode>().def_ro("a", &NotNode::a);
   }
 
   static constexpr const char* _type_key = "tir.Not";
@@ -578,24 +504,12 @@ class SelectNode : public PrimExprNode {
   /*! \brief value to be returned when condition is false. */
   PrimExpr false_value;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("dtype", &dtype);
-    v->Visit("condition", &condition);
-    v->Visit("true_value", &true_value);
-    v->Visit("false_value", &false_value);
-    v->Visit("span", &span);
-  }
-
-  bool SEqualReduce(const SelectNode* other, SEqualReducer equal) const {
-    return equal(dtype, other->dtype) && equal(condition, other->condition) &&
-           equal(true_value, other->true_value) && equal(false_value, other->false_value);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(dtype);
-    hash_reduce(condition);
-    hash_reduce(true_value);
-    hash_reduce(false_value);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<SelectNode>()
+        .def_ro("condition", &SelectNode::condition)
+        .def_ro("true_value", &SelectNode::true_value)
+        .def_ro("false_value", &SelectNode::false_value);
   }
 
   static constexpr const char* _type_key = "tir.Select";
@@ -633,24 +547,12 @@ class BufferLoadNode : public PrimExprNode {
   /*! \brief The predicate mask for loading values. */
   Optional<PrimExpr> predicate;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("dtype", &(this->dtype));
-    v->Visit("buffer", &buffer);
-    v->Visit("indices", &indices);
-    v->Visit("predicate", &predicate);
-    v->Visit("span", &span);
-  }
-
-  bool SEqualReduce(const BufferLoadNode* other, SEqualReducer equal) const {
-    return equal(dtype, other->dtype) && equal(buffer, other->buffer) &&
-           equal(indices, other->indices);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(dtype);
-    hash_reduce(buffer);
-    hash_reduce(indices);
-    hash_reduce(predicate);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<BufferLoadNode>()
+        .def_ro("buffer", &BufferLoadNode::buffer)
+        .def_ro("indices", &BufferLoadNode::indices)
+        .def_ro("predicate", &BufferLoadNode::predicate);
   }
 
   static constexpr const char* _type_key = "tir.BufferLoad";
@@ -680,7 +582,7 @@ class BufferLoadNode : public PrimExprNode {
 class BufferLoad : public PrimExpr {
  public:
   TVM_DLL explicit BufferLoad(Buffer buffer, Array<PrimExpr> indices,
-                              Optional<PrimExpr> predicate = NullOpt, Span span = Span());
+                              Optional<PrimExpr> predicate = std::nullopt, Span span = Span());
   TVM_DEFINE_OBJECT_REF_METHODS(BufferLoad, PrimExpr, BufferLoadNode);
   TVM_DEFINE_OBJECT_REF_COW_METHOD(BufferLoadNode);
 };
@@ -701,22 +603,11 @@ class ProducerLoadNode : public PrimExprNode {
   /*! \brief The location arguments. */
   Array<PrimExpr> indices;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("dtype", &(this->dtype));
-    v->Visit("producer", &producer);
-    v->Visit("indices", &indices);
-    v->Visit("span", &span);
-  }
-
-  bool SEqualReduce(const ProducerLoadNode* other, SEqualReducer equal) const {
-    return equal(dtype, other->dtype) && equal(producer, other->producer) &&
-           equal(indices, other->indices);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(dtype);
-    hash_reduce(producer);
-    hash_reduce(indices);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<ProducerLoadNode>()
+        .def_ro("producer", &ProducerLoadNode::producer)
+        .def_ro("indices", &ProducerLoadNode::indices);
   }
 
   static constexpr const char* _type_key = "tir.ProducerLoad";
@@ -753,24 +644,12 @@ class RampNode : public PrimExprNode {
   /*! \brief Total number of lanes. */
   PrimExpr lanes;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("dtype", &dtype);
-    v->Visit("base", &base);
-    v->Visit("stride", &stride);
-    v->Visit("lanes", &lanes);
-    v->Visit("span", &span);
-  }
-
-  bool SEqualReduce(const RampNode* other, SEqualReducer equal) const {
-    return equal(dtype, other->dtype) && equal(base, other->base) && equal(stride, other->stride) &&
-           equal(lanes, other->lanes);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(dtype);
-    hash_reduce(base);
-    hash_reduce(stride);
-    hash_reduce(lanes);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<RampNode>()
+        .def_ro("base", &RampNode::base)
+        .def_ro("stride", &RampNode::stride)
+        .def_ro("lanes", &RampNode::lanes);
   }
 
   static constexpr const char* _type_key = "tir.Ramp";
@@ -796,21 +675,11 @@ class BroadcastNode : public PrimExprNode {
   /*! \brief The number of lanes. */
   PrimExpr lanes;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("dtype", &dtype);
-    v->Visit("value", &value);
-    v->Visit("lanes", &lanes);
-    v->Visit("span", &span);
-  }
-
-  bool SEqualReduce(const BroadcastNode* other, SEqualReducer equal) const {
-    return equal(dtype, other->dtype) && equal(value, other->value) && equal(lanes, other->lanes);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(dtype);
-    hash_reduce(value);
-    hash_reduce(lanes);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<BroadcastNode>()
+        .def_ro("value", &BroadcastNode::value)
+        .def_ro("lanes", &BroadcastNode::lanes);
   }
 
   static constexpr const char* _type_key = "tir.Broadcast";
@@ -840,24 +709,12 @@ class LetNode : public PrimExprNode {
   /*! \brief The result expression. */
   PrimExpr body;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("dtype", &dtype);
-    v->Visit("var", &var);
-    v->Visit("value", &value);
-    v->Visit("body", &body);
-    v->Visit("span", &span);
-  }
-
-  bool SEqualReduce(const LetNode* other, SEqualReducer equal) const {
-    return equal(dtype, other->dtype) && equal.DefEqual(var, other->var) &&
-           equal(value, other->value) && equal(body, other->body);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(dtype);
-    hash_reduce.DefHash(var);
-    hash_reduce(value);
-    hash_reduce(body);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<LetNode>()
+        .def_ro("var", &LetNode::var, refl::AttachFieldFlag::SEqHashDef())
+        .def_ro("value", &LetNode::value)
+        .def_ro("body", &LetNode::body);
   }
 
   static constexpr const char* _type_key = "tir.Let";
@@ -886,25 +743,14 @@ class CallNode : public PrimExprNode {
    *  - It can be tvm::Op which corresponds to the primitive operators(intrinsics).
    *  - It can also be another function in the IRModule (GlobalVar).
    */
-  RelayExpr op;
+  RelaxExpr op;
 
   /*! \brief The arguments. */
   Array<PrimExpr> args;
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("dtype", &dtype);
-    v->Visit("op", &op);
-    v->Visit("args", &args);
-    v->Visit("span", &span);
-  }
 
-  bool SEqualReduce(const CallNode* other, SEqualReducer equal) const {
-    return equal(dtype, other->dtype) && equal(op, other->op) && equal(args, other->args);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(dtype);
-    hash_reduce(op);
-    hash_reduce(args);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<CallNode>().def_ro("op", &CallNode::op).def_ro("args", &CallNode::args);
   }
 
   static constexpr const char* _type_key = "tir.Call";
@@ -917,7 +763,7 @@ class CallNode : public PrimExprNode {
  */
 class Call : public PrimExpr {
  public:
-  TVM_DLL Call(DataType dtype, RelayExpr op, Array<PrimExpr> args, Span span = Span());
+  TVM_DLL Call(DataType dtype, RelaxExpr op, Array<PrimExpr> args, Span span = Span());
   TVM_DEFINE_OBJECT_REF_METHODS(Call, PrimExpr, CallNode);
   TVM_DEFINE_OBJECT_REF_COW_METHOD(CallNode);
 };
@@ -934,22 +780,11 @@ class ShuffleNode : public PrimExprNode {
   /*! \brief The indices of each element. */
   Array<PrimExpr> indices;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("dtype", &dtype);
-    v->Visit("vectors", &vectors);
-    v->Visit("indices", &indices);
-    v->Visit("span", &span);
-  }
-
-  bool SEqualReduce(const ShuffleNode* other, SEqualReducer equal) const {
-    return equal(dtype, other->dtype) && equal(vectors, other->vectors) &&
-           equal(indices, other->indices);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(dtype);
-    hash_reduce(vectors);
-    hash_reduce(indices);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<ShuffleNode>()
+        .def_ro("vectors", &ShuffleNode::vectors)
+        .def_ro("indices", &ShuffleNode::indices);
   }
 
   static constexpr const char* _type_key = "tir.Shuffle";
@@ -997,29 +832,18 @@ class CommReducerNode : public Object {
    */
   mutable Span span;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("lhs", &lhs);
-    v->Visit("rhs", &rhs);
-    v->Visit("result", &result);
-    v->Visit("identity_element", &identity_element);
-    v->Visit("span", &span);
-  }
-
-  bool SEqualReduce(const CommReducerNode* other, SEqualReducer equal) const {
-    return equal.DefEqual(lhs, other->lhs) && equal.DefEqual(rhs, other->rhs) &&
-           equal(result, other->result) && equal(identity_element, other->identity_element);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce.DefHash(lhs);
-    hash_reduce.DefHash(rhs);
-    hash_reduce(result);
-    hash_reduce(identity_element);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<CommReducerNode>()
+        .def_ro("lhs", &CommReducerNode::lhs, refl::AttachFieldFlag::SEqHashDef())
+        .def_ro("rhs", &CommReducerNode::rhs, refl::AttachFieldFlag::SEqHashDef())
+        .def_ro("result", &CommReducerNode::result)
+        .def_ro("identity_element", &CommReducerNode::identity_element)
+        .def_ro("span", &CommReducerNode::span, refl::AttachFieldFlag::SEqHashIgnore());
   }
 
   static constexpr const char* _type_key = "tir.CommReducer";
-  static constexpr const bool _type_has_method_sequal_reduce = true;
-  static constexpr const bool _type_has_method_shash_reduce = true;
+  static constexpr TVMFFISEqHashKind _type_s_eq_hash_kind = kTVMFFISEqHashKindTreeNode;
   TVM_DECLARE_FINAL_OBJECT_INFO(CommReducerNode, Object);
 };
 
@@ -1054,33 +878,15 @@ class ReduceNode : public PrimExprNode {
   /*! \brief the index of this reduce node */
   int value_index;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("dtype", &dtype);
-    v->Visit("combiner", &combiner);
-    v->Visit("source", &source);
-    v->Visit("init", &init);
-    v->Visit("axis", &axis);
-    v->Visit("condition", &condition);
-    v->Visit("value_index", &value_index);
-    v->Visit("span", &span);
-  }
-
-  bool SEqualReduce(const ReduceNode* other, SEqualReducer equal) const {
-    // check axis first so IterVars can define the necessary variables.
-    return equal(dtype, other->dtype) && equal(axis, other->axis) &&
-           equal(combiner, other->combiner) && equal(source, other->source) &&
-           equal(init, other->init) && equal(condition, other->condition) &&
-           equal(value_index, other->value_index);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(dtype);
-    hash_reduce(axis);
-    hash_reduce(combiner);
-    hash_reduce(source);
-    hash_reduce(init);
-    hash_reduce(condition);
-    hash_reduce(value_index);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<ReduceNode>()
+        .def_ro("combiner", &ReduceNode::combiner)
+        .def_ro("source", &ReduceNode::source)
+        .def_ro("init", &ReduceNode::init)
+        .def_ro("axis", &ReduceNode::axis)
+        .def_ro("condition", &ReduceNode::condition)
+        .def_ro("value_index", &ReduceNode::value_index);
   }
 
   static constexpr const char* _type_key = "tir.Reduce";
@@ -1100,42 +906,6 @@ class Reduce : public PrimExpr {
   TVM_DEFINE_OBJECT_REF_COW_METHOD(ReduceNode);
 };
 
-/*! \brief Any shape. */
-class AnyNode : public PrimExprNode {
- public:
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("dtype", &dtype);
-    v->Visit("span", &span);
-  }
-
-  bool SEqualReduce(const AnyNode* other, SEqualReducer equal) const {
-    return equal(dtype, other->dtype);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {}
-
-  /*! \brief Convert to var. */
-  Var ToVar() const { return Var("any_dim", DataType::Int(32)); }
-
-  /*! \brief Convert to SizeVar. */
-  SizeVar ToSizeVar() const { return SizeVar("any_dim", DataType::Int(32)); }
-
-  static constexpr const char* _type_key = "tir.Any";
-  TVM_DECLARE_FINAL_OBJECT_INFO(AnyNode, PrimExprNode);
-};
-
-/*!
- * \brief Managed reference to AnyNode
- * \sa AnyNode
- */
-class Any : public PrimExpr {
- public:
-  TVM_DLL Any(Span span = Span());
-
-  TVM_DEFINE_NOTNULLABLE_OBJECT_REF_METHODS(Any, PrimExpr, AnyNode);
-  TVM_DEFINE_OBJECT_REF_COW_METHOD(AnyNode);
-};
-
 /*
  * \brief Template function to convert Map to unordered_map
  *  Sometimes useful for API gluing when internal uses unordered_map
@@ -1153,63 +923,20 @@ inline std::unordered_map<K, V> as_unordered_map(const Map<K, V>& dmap) {
   return ret;
 }
 }  // namespace tir
-}  // namespace tvm
 
-namespace tvm {
-namespace runtime {
-
-// Automatic conversion into PrimExpr, when called through the FFI.
-// Automatic conversions into IntImm, Integer, and Bool are registered
-// in "tvm/ir/expr.h", as they are currently in use outside of TIR.
+namespace ffi {
 
 template <>
-struct PackedFuncValueConverter<tvm::tir::StringImm> {
-  template <typename PODSubclass>
-  static Optional<tvm::tir::StringImm> TryFrom(const PODSubclass& val) {
-    auto type_code = val.type_code();
-    bool can_convert = type_code == kTVMDataType || type_code == kTVMBytes ||
-                       type_code == kTVMStr || val.template IsObjectRef<tvm::runtime::String>();
-    if (can_convert) {
-      return tvm::tir::StringImm(PackedFuncValueConverter<String>::From(val));
-    } else {
-      return NullOpt;
-    }
-  }
-
-  template <typename PODSubclass>
-  static tvm::tir::StringImm From(const PODSubclass& val) {
-    if (auto opt = TryFrom(val)) {
-      return opt.value();
-    } else {
-      return val.template AsObjectRef<tvm::tir::StringImm>();
-    }
-  }
-};
+inline constexpr bool use_default_type_traits_v<tvm::tir::StringImm> = false;
 
 template <>
-struct PackedFuncValueConverter<PrimExpr> {
-  // Common rule for RetValue and ArgValue.  Templated to ensure
-  // correct delegation to `operator std::string()` for either
-  // TVMArgValue or TVMRetValue.
-  template <typename PODSubclass>
-  static PrimExpr From(const PODSubclass& val) {
-    if (auto opt = val.TryAsBool()) {
-      // Check against val.TryAsBool directly, to avoid the
-      // bounds-checking in PackedFuncValueConverter<Bool>::TryFrom.
-      return tvm::Bool(opt.value());
-    } else if (auto opt = PackedFuncValueConverter<IntImm>::TryFrom(val)) {
-      return opt.value();
-    } else if (auto opt = PackedFuncValueConverter<FloatImm>::TryFrom(val)) {
-      return opt.value();
-    } else if (auto opt = PackedFuncValueConverter<tvm::tir::StringImm>::TryFrom(val)) {
-      return opt.value();
-    } else {
-      return PrimExpr::FromObject_(val.template AsObjectRef<ObjectRef>());
-    }
+struct TypeTraits<tvm::tir::StringImm>
+    : public ObjectRefWithFallbackTraitsBase<tvm::tir::StringImm, String> {
+  TVM_FFI_INLINE static tvm::tir::StringImm ConvertFallbackValue(String value) {
+    return tvm::tir::StringImm(value);
   }
 };
-
-}  // namespace runtime
+}  // namespace ffi
 }  // namespace tvm
 
 namespace std {

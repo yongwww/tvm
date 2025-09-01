@@ -37,7 +37,7 @@ namespace distributed {
 class DeviceMeshNode : public GlobalInfoNode {
  public:
   /*! \brief logical shape of the mesh*/
-  ShapeTuple shape;
+  ffi::Shape shape;
 
   /*! \brief device ids in the mesh*/
   Array<Integer> device_ids;
@@ -45,32 +45,15 @@ class DeviceMeshNode : public GlobalInfoNode {
   /*! \brief Optionally use range to represent device_ids*/
   Optional<Range> device_range;
 
-  void VisitAttrs(tvm::AttrVisitor* v) {
-    v->Visit("shape", &shape);
-    v->Visit("device_ids", &device_ids);
-    v->Visit("device_range", &device_range);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<DeviceMeshNode>()
+        .def_ro("shape", &DeviceMeshNode::shape)
+        .def_ro("device_ids", &DeviceMeshNode::device_ids)
+        .def_ro("device_range", &DeviceMeshNode::device_range);
   }
+
   static constexpr const char* _type_key = "relax.distributed.DeviceMesh";
-
-  bool SEqualReduce(const DeviceMeshNode* other, SEqualReducer equal) const {
-    if (shape.size() != other->shape.size()) {
-      return false;
-    }
-    for (int i = 0; i < static_cast<int>(shape.size()); i++) {
-      if (!equal(shape[i], other->shape[i])) {
-        return false;
-      }
-    }
-    return equal(device_ids, other->device_ids);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(device_ids);
-    for (int i = 0; i < static_cast<int>(shape.size()); i++) {
-      hash_reduce(shape[i]);
-    }
-  }
-
   TVM_DECLARE_FINAL_OBJECT_INFO(DeviceMeshNode, GlobalInfoNode);
 };
 
@@ -80,8 +63,8 @@ class DeviceMeshNode : public GlobalInfoNode {
  */
 class DeviceMesh : public GlobalInfo {
  public:
-  TVM_DLL DeviceMesh(ShapeTuple shape, Array<Integer> device_ids);
-  TVM_DLL DeviceMesh(ShapeTuple shape, Range device_range);
+  TVM_DLL DeviceMesh(ffi::Shape shape, Array<Integer> device_ids);
+  TVM_DLL DeviceMesh(ffi::Shape shape, Range device_range);
   TVM_DEFINE_OBJECT_REF_METHODS(DeviceMesh, GlobalInfo, DeviceMeshNode);
 };
 

@@ -24,11 +24,12 @@
 #ifndef TVM_RELAX_DATAFLOW_PATTERN_H_
 #define TVM_RELAX_DATAFLOW_PATTERN_H_
 
+#include <tvm/ffi/container/array.h>
+#include <tvm/ffi/optional.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/ir/expr.h>
 #include <tvm/relax/expr.h>
 #include <tvm/relax/type.h>
-#include <tvm/runtime/container/array.h>
-#include <tvm/runtime/container/optional.h>
 #include <tvm/support/with.h>
 
 #include <cstdint>
@@ -55,7 +56,6 @@ class AndPattern;
 class NotPattern;
 class ShapePattern;
 class StructInfoPattern;
-class TypePattern;
 class DataTypePattern;
 class AttrPattern;
 class SameShapeConstraint;
@@ -91,6 +91,7 @@ TVM_DLL PatternSeq operator>>(const PatternSeq& lhs, const PatternSeq& rhs);
 class DFPatternNode : public Object {
  public:
   static constexpr const char* _type_key = "DFPatternNode";
+  static constexpr const uint32_t _type_child_slots = 21;
   TVM_DECLARE_BASE_OBJECT_INFO(DFPatternNode, Object);
 };
 
@@ -112,11 +113,9 @@ class DFPattern : public ObjectRef {
   /*! \brief Syntatic Sugar for creating a NotPattern */
   TVM_DLL NotPattern operator~() const;
   /*! \brief Syntatic Sugar for creating an AttrPattern */
-  TVM_DLL AttrPattern HasAttr(const Map<String, ObjectRef>& attrs) const;
+  TVM_DLL AttrPattern HasAttr(const Map<String, Any>& attrs) const;
   /*! \brief Syntatic Sugar for creating a StructInfoPattern */
   TVM_DLL StructInfoPattern HasStructInfo(const StructInfo& struct_info) const;
-  /*! \brief Syntatic Sugar for creating a TypePattern */
-  TVM_DLL TypePattern HasType(const Type& type) const;
   /*! \brief Syntatic Sugar for creating a DataTypePattern with a DataType */
   TVM_DLL DataTypePattern HasDtype(const DataType& dtype) const;
   /*! \brief Syntatic Sugar for creating a DataTypePattern with a data type's name */
@@ -187,7 +186,7 @@ class DFConstraintNode : public Object {
    * \param match_state A function that can be called to check the
    *    current state of the match.  The function takes as argument a
    *    pattern on which the constraint depends, and returns the relax
-   *    variable matched by that pattern, or NullOpt if the pattern
+   *    variable matched by that pattern, or std::nullopt if the pattern
    *    has not yet been matched.
    *
    * \return A tuple of `PrimExpr` and `bool`.  The first element is a
@@ -217,7 +216,11 @@ class PatternSeqNode final : public Object {
   tvm::Array<DFPattern> patterns;         /*!< The sequence of DFPatterns */
   std::vector<PairCons> pair_constraints; /*!< Constraints between the previous and next patterns */
 
-  void VisitAttrs(tvm::AttrVisitor* v) { v->Visit("patterns", &patterns); }
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<PatternSeqNode>().def_ro("patterns", &PatternSeqNode::patterns);
+  }
+
   static constexpr const char* _type_key = "relax.dpl.PatternSeq";
   TVM_DECLARE_BASE_OBJECT_INFO(PatternSeqNode, Object);
 };
@@ -345,7 +348,10 @@ class ExprPatternNode : public DFPatternNode {
  public:
   Expr expr; /*!< The expression to match */
 
-  void VisitAttrs(tvm::AttrVisitor* v) { v->Visit("expr", &expr); }
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<ExprPatternNode>().def_ro("expr", &ExprPatternNode::expr);
+  }
 
   static constexpr const char* _type_key = "relax.dpl.ExprPattern";
   TVM_DECLARE_FINAL_OBJECT_INFO(ExprPatternNode, DFPatternNode);
@@ -370,9 +376,14 @@ class VarPatternNode : public DFPatternNode {
  public:
   String name;
   const String& name_hint() const { return name; }
-  void VisitAttrs(tvm::AttrVisitor* v) { v->Visit("name", &name); }
+
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<VarPatternNode>().def_ro("name", &VarPatternNode::name);
+  }
 
   static constexpr const char* _type_key = "relax.dpl.VarPattern";
+  static constexpr const uint32_t _type_child_slots = 1;
   TVM_DECLARE_BASE_OBJECT_INFO(VarPatternNode, DFPatternNode);
 };
 
@@ -397,8 +408,13 @@ class VarPattern : public DFPattern {
  */
 class DataflowVarPatternNode : public VarPatternNode {
  public:
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<DataflowVarPatternNode>();
+  }
+
   static constexpr const char* _type_key = "relax.dpl.DataflowVarPattern";
-  TVM_DECLARE_FINAL_OBJECT_INFO(DataflowVarPatternNode, DFPatternNode);
+  TVM_DECLARE_FINAL_OBJECT_INFO(DataflowVarPatternNode, VarPatternNode);
 };
 
 /*!
@@ -438,7 +454,10 @@ class GlobalVarPattern : public DFPattern {
  */
 class ConstantPatternNode : public DFPatternNode {
  public:
-  void VisitAttrs(tvm::AttrVisitor* v) {}
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<ConstantPatternNode>();
+  }
 
   static constexpr const char* _type_key = "relax.dpl.ConstantPattern";
   TVM_DECLARE_FINAL_OBJECT_INFO(ConstantPatternNode, DFPatternNode);
@@ -461,7 +480,7 @@ class CallPatternNode : public DFPatternNode {
  public:
   /*!
    * \note The op field can be:
-   *  - relay::Op which corresponds to the primitive operators.
+   *  - relax::Op which corresponds to the primitive operators.
    *  - user defined functions (Function, GlobalVar, Var).
    */
   DFPattern op;               /*!< The operator (function) being invoked */
@@ -476,9 +495,11 @@ class CallPatternNode : public DFPatternNode {
 
   // Todo(relax-team): Dataflow pattern for StructInfo, and match sinfo_args
 
-  void VisitAttrs(tvm::AttrVisitor* v) {
-    v->Visit("op", &op);
-    v->Visit("args", &args);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<CallPatternNode>()
+        .def_ro("op", &CallPatternNode::op)
+        .def_ro("args", &CallPatternNode::args);
   }
 
   static constexpr const char* _type_key = "relax.dpl.CallPattern";
@@ -499,7 +520,12 @@ class CallPattern : public DFPattern {
 class PrimArrPatternNode : public DFPatternNode {
  public:
   Array<PrimExpr> fields; /*!< The array to match */
-  void VisitAttrs(tvm::AttrVisitor* v) { v->Visit("fields", &fields); }
+
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<PrimArrPatternNode>().def_ro("fields", &PrimArrPatternNode::fields);
+  }
+
   static constexpr const char* _type_key = "relax.dpl.PrimArrPattern";
   TVM_DECLARE_FINAL_OBJECT_INFO(PrimArrPatternNode, DFPatternNode);
 };
@@ -530,9 +556,11 @@ class FunctionPatternNode : public DFPatternNode {
    */
   DFPattern body; /*!< The body of the function */
 
-  void VisitAttrs(tvm::AttrVisitor* v) {
-    v->Visit("params", &params);
-    v->Visit("body", &body);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<FunctionPatternNode>()
+        .def_ro("params", &FunctionPatternNode::params)
+        .def_ro("body", &FunctionPatternNode::body);
   }
 
   static constexpr const char* _type_key = "relax.dpl.FunctionPattern";
@@ -563,7 +591,10 @@ class TuplePatternNode : public DFPatternNode {
  public:
   tvm::Array<DFPattern> fields; /*!< The fields of the tuple */
 
-  void VisitAttrs(tvm::AttrVisitor* v) { v->Visit("fields", &fields); }
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<TuplePatternNode>().def_ro("fields", &TuplePatternNode::fields);
+  }
 
   static constexpr const char* _type_key = "relax.dpl.TuplePattern";
   TVM_DECLARE_FINAL_OBJECT_INFO(TuplePatternNode, DFPatternNode);
@@ -587,7 +618,11 @@ class UnorderedTuplePatternNode : public DFPatternNode {
  public:
   tvm::Array<DFPattern> fields; /*!< The fields of the tuple */
 
-  void VisitAttrs(tvm::AttrVisitor* v) { v->Visit("fields", &fields); }
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<UnorderedTuplePatternNode>().def_ro("fields",
+                                                        &UnorderedTuplePatternNode::fields);
+  }
 
   static constexpr const char* _type_key = "relax.dpl.UnorderedTuplePattern";
   TVM_DECLARE_FINAL_OBJECT_INFO(UnorderedTuplePatternNode, DFPatternNode);
@@ -613,9 +648,11 @@ class TupleGetItemPatternNode : public DFPatternNode {
   DFPattern tuple; /*!< The tuple Expression */
   int index;       /*!< The index of the tuple with -1 meaning arbitrary */
 
-  void VisitAttrs(tvm::AttrVisitor* v) {
-    v->Visit("tuple", &tuple);
-    v->Visit("index", &index);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<TupleGetItemPatternNode>()
+        .def_ro("tuple", &TupleGetItemPatternNode::tuple)
+        .def_ro("index", &TupleGetItemPatternNode::index);
   }
 
   static constexpr const char* _type_key = "relax.dpl.TupleGetItemPattern";
@@ -641,9 +678,11 @@ class AndPatternNode : public DFPatternNode {
   DFPattern left;  /*!< The left hand side of the conjunction */
   DFPattern right; /*!< The right hand side of the conjunction */
 
-  void VisitAttrs(tvm::AttrVisitor* v) {
-    v->Visit("left", &left);
-    v->Visit("right", &right);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<AndPatternNode>()
+        .def_ro("left", &AndPatternNode::left)
+        .def_ro("right", &AndPatternNode::right);
   }
 
   static constexpr const char* _type_key = "relax.dpl.AndPattern";
@@ -669,9 +708,11 @@ class OrPatternNode : public DFPatternNode {
   DFPattern left;  /*!< The left hand side of the disjunction */
   DFPattern right; /*!< The right hand side of the disjunction */
 
-  void VisitAttrs(tvm::AttrVisitor* v) {
-    v->Visit("left", &left);
-    v->Visit("right", &right);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<OrPatternNode>()
+        .def_ro("left", &OrPatternNode::left)
+        .def_ro("right", &OrPatternNode::right);
   }
 
   static constexpr const char* _type_key = "relax.dpl.OrPattern";
@@ -696,7 +737,10 @@ class NotPatternNode : public DFPatternNode {
  public:
   DFPattern reject; /*!< The pattern to reject */
 
-  void VisitAttrs(tvm::AttrVisitor* v) { v->Visit("reject", &reject); }
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<NotPatternNode>().def_ro("reject", &NotPatternNode::reject);
+  }
 
   static constexpr const char* _type_key = "relax.dpl.NotPattern";
   TVM_DECLARE_FINAL_OBJECT_INFO(NotPatternNode, DFPatternNode);
@@ -718,7 +762,10 @@ class NotPattern : public DFPattern {
  */
 class WildcardPatternNode : public DFPatternNode {
  public:
-  void VisitAttrs(tvm::AttrVisitor* v) {}
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<WildcardPatternNode>();
+  }
 
   static constexpr const char* _type_key = "relax.dpl.WildcardPattern";
   TVM_DECLARE_FINAL_OBJECT_INFO(WildcardPatternNode, DFPatternNode);
@@ -741,34 +788,6 @@ class WildcardPattern : public DFPattern {
 };
 
 /*!
- * \brief Pattern for matching a certain type.
- * \sa TypePattern
- */
-class TypePatternNode : public DFPatternNode {
- public:
-  DFPattern pattern; /*!< The pattern to match */
-  Type type;         /*!< The type to match */
-
-  void VisitAttrs(tvm::AttrVisitor* v) {
-    v->Visit("pattern", &pattern);
-    v->Visit("type", &type);
-  }
-
-  static constexpr const char* _type_key = "relax.dpl.TypePattern";
-  TVM_DECLARE_FINAL_OBJECT_INFO(TypePatternNode, DFPatternNode);
-};
-
-/*!
- * \brief Managed reference to TypePatternNode.
- * \sa TypePatternNode
- */
-class TypePattern : public DFPattern {
- public:
-  TVM_DLL TypePattern(DFPattern pattern, Type type);
-  TVM_DEFINE_OBJECT_REF_METHODS(TypePattern, DFPattern, TypePatternNode);
-};
-
-/*!
  * \brief Pattern for matching a certain struct info.
  * \sa StructInfoPattern
  */
@@ -777,9 +796,11 @@ class StructInfoPatternNode : public DFPatternNode {
   DFPattern pattern;      /*!< The pattern to match */
   StructInfo struct_info; /*!< The type to match */
 
-  void VisitAttrs(tvm::AttrVisitor* v) {
-    v->Visit("pattern", &pattern);
-    v->Visit("struct_info", &struct_info);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<StructInfoPatternNode>()
+        .def_ro("pattern", &StructInfoPatternNode::pattern)
+        .def_ro("struct_info", &StructInfoPatternNode::struct_info);
   }
 
   static constexpr const char* _type_key = "relax.dpl.StructInfoPattern";
@@ -801,9 +822,11 @@ class ShapePatternNode : public DFPatternNode {
   DFPattern pattern;     /*!< The root pattern to match */
   Array<PrimExpr> shape; /*!< The shape to match */
 
-  void VisitAttrs(tvm::AttrVisitor* v) {
-    v->Visit("pattern", &pattern);
-    v->Visit("shape", &shape);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<ShapePatternNode>()
+        .def_ro("pattern", &ShapePatternNode::pattern)
+        .def_ro("shape", &ShapePatternNode::shape);
   }
 
   static constexpr const char* _type_key = "relax.dpl.ShapePattern";
@@ -833,7 +856,10 @@ class SameShapeConstraintNode : public DFConstraintNode {
   std::tuple<PrimExpr, bool> AsPrimExpr(
       std::function<Optional<Var>(const DFPatternNode*)> match_state) const override;
 
-  void VisitAttrs(tvm::AttrVisitor* v) { v->Visit("args", &args); }
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<SameShapeConstraintNode>().def_ro("args", &SameShapeConstraintNode::args);
+  }
 
   static constexpr const char* _type_key = "relax.dpl.SameShapeConstraint";
   TVM_DECLARE_FINAL_OBJECT_INFO(SameShapeConstraintNode, DFConstraintNode);
@@ -858,9 +884,11 @@ class DataTypePatternNode : public DFPatternNode {
   DFPattern pattern; /*!< The root pattern to match */
   DataType dtype;    /*!< The data type to match */
 
-  void VisitAttrs(tvm::AttrVisitor* v) {
-    v->Visit("pattern", &pattern);
-    v->Visit("dtype", &dtype);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<DataTypePatternNode>()
+        .def_ro("pattern", &DataTypePatternNode::pattern)
+        .def_ro("dtype", &DataTypePatternNode::dtype);
   }
 
   static constexpr const char* _type_key = "relax.dpl.DataTypePattern";
@@ -886,9 +914,11 @@ class AttrPatternNode : public DFPatternNode {
   DFPattern pattern; /*!< The root pattern to match */
   DictAttrs attrs;   /*!< The attributes (a map/dictionary) to match */
 
-  void VisitAttrs(tvm::AttrVisitor* v) {
-    v->Visit("pattern", &pattern);
-    v->Visit("attrs", &attrs);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<AttrPatternNode>()
+        .def_ro("pattern", &AttrPatternNode::pattern)
+        .def_ro("attrs", &AttrPatternNode::attrs);
   }
 
   static constexpr const char* _type_key = "relax.dpl.AttrPattern";
@@ -916,7 +946,12 @@ class ExternFuncPatternNode : public DFPatternNode {
 
   /*! \brief The external function name */
   const String& global_symbol() const { return global_symbol_; }
-  void VisitAttrs(tvm::AttrVisitor* v) { v->Visit("global_symbol", &global_symbol_); }
+
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<ExternFuncPatternNode>().def_ro("global_symbol",
+                                                    &ExternFuncPatternNode::global_symbol_);
+  }
 
   static constexpr const char* _type_key = "relax.dpl.ExternFuncPattern";
   TVM_DECLARE_FINAL_OBJECT_INFO(ExternFuncPatternNode, DFPatternNode);
@@ -944,11 +979,11 @@ ExprPattern IsExpr(const Expr& expr);
 ExprPattern IsOp(const String& op_name);
 /*! \brief Syntatic Sugar for call_tir (return a tensor) */
 // Todo(relax-team): Dataflow pattern for StructInfo, and match out_sinfo
-CallPattern IsCallTIR(const String& name, Optional<TuplePattern> args = NullOpt);
+CallPattern IsCallTIR(const String& name, Optional<TuplePattern> args = std::nullopt);
 /*! \brief Syntatic Sugar for call_tir (return a tuple of tensor) */
 CallPattern IsCallTIR(const String& name, TuplePattern var_args);
 /*! \brief Syntatic Sugar for call_dps_packed (return a tensor) */
-CallPattern IsCallDPSPacked(const String& name, Optional<TuplePattern> args = NullOpt);
+CallPattern IsCallDPSPacked(const String& name, Optional<TuplePattern> args = std::nullopt);
 /*! \brief Syntatic Sugar for call_dps_packed (return a tuple of tensor) */
 CallPattern IsCallDPSPacked(const String& name, TuplePattern var_args);
 /*! \brief Syntatic Sugar for creating TuplePattern or UnorderedTuplePattern (unordered=true) */

@@ -48,6 +48,7 @@ from tvm import TVMError, relax, tir, topi
 from tvm.ir import IRModule
 from tvm.ir.supply import NameSupply
 from tvm.tir.generic import cast
+from tvm.topi.utils import get_const_tuple
 
 from ..common import autopad
 
@@ -60,13 +61,13 @@ def get_type(elem_type: Union[str, int]) -> str:
         return elem_type
 
     try:
-        from onnx.mapping import (  # pylint: disable=import-outside-toplevel
-            TENSOR_TYPE_TO_NP_TYPE,
+        from onnx.helper import (  # pylint: disable=import-outside-toplevel
+            tensor_dtype_to_np_dtype,
         )
     except ImportError as exception:
         raise ImportError("Unable to import onnx which is required {}".format(exception))
 
-    return str(TENSOR_TYPE_TO_NP_TYPE[elem_type])
+    return str(tensor_dtype_to_np_dtype(elem_type))
 
 
 def get_constant(
@@ -335,15 +336,17 @@ class BinaryBase(OnnxOpConverter):
         """Base implementation for binary operations."""
         if cls.numpy_op is None or cls.relax_op is None:
             raise ValueError("Numpy and Relax operators must be defined for BinaryBase.")
-        if all([isinstance(inp, relax.Constant) for inp in inputs]):
-            output = cls.numpy_op(  # pylint: disable=not-callable
-                inputs[0].data.numpy(), inputs[1].data.numpy()
-            )
-            return relax.const(output, inputs[0].struct_info.dtype)
-        if any([isinstance(inp, relax.PrimValue) for inp in inputs]):
+        if all([not isinstance(inp, (relax.expr.Call, relax.Var)) for inp in inputs]):
             x = _to_numpy(inputs[0])
             y = _to_numpy(inputs[1])
-            return relax.PrimValue(cls.numpy_op(x, y))  # pylint: disable=not-callable
+            output = cls.numpy_op(x, y)  # pylint: disable=not-callable
+            if x.dtype == y.dtype:
+                # no numpy precision widening
+                output = output.astype(x.dtype)
+            if all([isinstance(inp, relax.Constant) for inp in inputs]):
+                return relax.const(output, output.dtype)  # pylint: disable=not-callable
+            if any([isinstance(inp, relax.PrimValue) for inp in inputs]):
+                return relax.PrimValue(output.item())  # pylint: disable=not-callable
 
         return cls.relax_op(inputs[0], inputs[1])  # pylint: disable=not-callable
 
@@ -564,15 +567,14 @@ class BitwiseXor(BitwiseBase):
         return cls.base_impl(bb, inputs, attr, params)
 
 
-class BitwiseNot(BitwiseBase):
+class BitwiseNot(OnnxOpConverter):
     """Converts an onnx BitwiseNot node into an equivalent Relax expression."""
-
-    numpy_op = _np.bitwise_not
-    relax_op = relax.op.bitwise_not
 
     @classmethod
     def _impl_v18(cls, bb, inputs, attr, params):
-        return cls.base_impl(bb, inputs, attr, params)
+        if isinstance(inputs[0], relax.Constant):
+            return relax.const(_np.bitwise_not(inputs[0].data.numpy()), inputs[0].struct_info.dtype)
+        return relax.op.bitwise_not(inputs[0])
 
 
 class BitShift(BitwiseBase):
@@ -914,7 +916,7 @@ class Gemm(OnnxOpConverter):
         A = inputs[0]
         B = inputs[1]
         C = inputs[2]
-        dtype = A.checked_type.dtype
+        dtype = A.struct_info.dtype
 
         # Compute Y = alpha * A X B + beta * C
 
@@ -1084,7 +1086,7 @@ class Mish(OnnxOpConverter):
 
     @classmethod
     def _impl_v18(cls, bb, inputs, attr, params):
-        dtype = inputs[0].checked_type.dtype
+        dtype = inputs[0].struct_info.dtype
         return inputs[0] * relax.op.tanh(
             relax.op.log(relax.const(1.0, dtype) + relax.op.exp(inputs[0]))
         )
@@ -1100,8 +1102,7 @@ class PRelu(OnnxOpConverter):
     def _impl_v1(cls, bb, inputs, attr, params):
         x = inputs[0]
         slope = inputs[1]
-        # TODO(tvm-team): Should add a new op for this.
-        return x * slope + relax.op.nn.relu(x) * (relax.const(1.0) - slope)
+        return relax.op.nn.prelu(x, slope)
 
 
 class ThresholdedRelu(OnnxOpConverter):
@@ -1339,9 +1340,16 @@ class CumSum(OnnxOpConverter):
             axis = int(axis.data.numpy())
         elif isinstance(axis, relax.Var):
             axis = 0
-        data = relax.op.cumsum(data, axis)
+
         if attr.get("reverse", 0) != 0:
             data = bb.emit_te(topi.flip, data, axis=axis if axis else 0)
+
+        data = relax.op.cumsum(data, axis)
+        data = bb.normalize(data)
+
+        if attr.get("reverse", 0) != 0:
+            data = bb.emit_te(topi.flip, data, axis=axis if axis else 0)
+
         return data
 
 
@@ -1671,7 +1679,7 @@ class Exp(OnnxOpConverter):
     def _impl_v1(cls, bb, inputs, attr, params):
         data = inputs[0]
         valid_types = ["float", "float32", "double", "float64", "float16"]
-        cls._check_type(data.checked_type.dtype, valid_types)
+        cls._check_type(data.struct_info.dtype, valid_types)
 
         return relax.op.exp(data)
 
@@ -1679,7 +1687,7 @@ class Exp(OnnxOpConverter):
     def _impl_v13(cls, bb, inputs, attr, params):
         data = inputs[0]
         valid_types = ["float", "float32", "double", "float64", "float16", "bfloat16"]
-        cls._check_type(data.checked_type.dtype, valid_types)
+        cls._check_type(data.struct_info.dtype, valid_types)
 
         return relax.op.exp(data)
 
@@ -1690,7 +1698,8 @@ class Softplus(OnnxOpConverter):
     @classmethod
     def _impl_v1(cls, bb, inputs, attr, params):
         dtype = inputs[0].struct_info.dtype
-        return relax.op.log(relax.op.exp(inputs[0]) + relax.const(1, dtype=dtype))
+        threshold = 10.0 if dtype == "float16" else 20.0
+        return relax.op.nn.softplus(inputs[0], threshold=threshold)
 
 
 class Softsign(OnnxOpConverter):
@@ -1717,14 +1726,14 @@ class Split(OnnxOpConverter):
         # When splits isnt specified divide evenly over axis.
         else:
             indices = attr["tvm_custom"]["num_outputs"]
-        return bb.emit_te(topi.split, inputs[0], indices, attr.get("axis", 0))
+        return relax.op.split(inputs[0], indices, attr.get("axis", 0))
 
     @classmethod
     def _impl_v13(cls, bb, inputs, attr, params):
         splits = inputs[1]
         splits_rank = None
         if splits is not None:
-            splits_rank = splits.checked_type.ndim
+            splits_rank = splits.struct_info.ndim
         if splits is not None and splits_rank > 0:
             if isinstance(splits, relax.Constant):
                 splits = splits.data.numpy()
@@ -1738,7 +1747,7 @@ class Split(OnnxOpConverter):
         # When splits isnt specified divide evenly over axis.
         else:
             indices = attr["tvm_custom"]["num_outputs"]
-        return bb.emit_te(topi.split, inputs[0], indices, axis=attr.get("axis", 0))
+        return relax.op.split(inputs[0], indices, attr.get("axis", 0))
 
 
 def get_prim_value_list(values):
@@ -1917,18 +1926,20 @@ class Expand(OnnxOpConverter):
         # If possible, directly expand to constant shape.
         if isinstance(shape, relax.Constant):
             new_shape = shape.data.numpy().tolist()
-            # For some reason, onnx allows target shapes to be smaller than input shapes.
-            # We need to go correct it.
+            # ONNX Expand operator requires preserving target rank and broadcasting
+            # according to standard rules. Dimensions are right-aligned.
             data_shape = [dim.value for dim in data.struct_info.shape]
-            # Dimensions are right alignment.
-            data_shape = [1] * (len(new_shape) - len(data_shape)) + data_shape
-            # Fix small target shapes.
-            for i, s in enumerate(new_shape):
-                if i < len(data_shape) and s < data_shape[i]:
+
+            # Right-align the shapes
+            if len(new_shape) > len(data_shape):
+                data_shape = [1] * (len(new_shape) - len(data_shape)) + data_shape
+            else:
+                new_shape = [1] * (len(data_shape) - len(new_shape)) + new_shape
+            # Fix small target shapes - if target dim is smaller than input dim
+            # use the input dim (ONNX-specific behavior).
+            for i in range(len(new_shape)):
+                if new_shape[i] < data_shape[i]:
                     new_shape[i] = data_shape[i]
-            # If the new shape matches the input shape, no transformation is needed.
-            if new_shape == data_shape:
-                return data
             return relax.op.broadcast_to(data, relax.ShapeExpr(new_shape))
 
         # Otherwise handle dynamic shapes.
@@ -2118,30 +2129,41 @@ class Resize(OnnxOpConverter):
 
         # Define relax implementation.
         if roi is not None:
-            roi = relax.op.concat(
-                [
-                    relax.op.strided_slice(roi, axes=[0], begin=[2], end=[ndims]),
-                    relax.op.strided_slice(roi, axes=[0], begin=[ndims + 2], end=[2 * ndims]),
-                ],
-                axis=0,
-            )
+            if isinstance(roi, relax.Constant):
+                roi = roi.data.numpy().tolist()
+            else:
+                roi = relax.op.concat(
+                    [
+                        relax.op.strided_slice(roi, axes=[0], begin=[2], end=[ndims]),
+                        relax.op.strided_slice(roi, axes=[0], begin=[ndims + 2], end=[2 * ndims]),
+                    ],
+                    axis=0,
+                )
+                # TODO The backend C++ func resize2d does not support dynamic ROI for now.
+                raise NotImplementedError("Dynamic ROI is not supported in resize2d for now.")
         else:
             roi = [0.0] * 4
 
         # Convert scales to sizes if needed.
         if scales is not None:
-            assert isinstance(scales, relax.Constant), "Only constant scales currently supported."
-            scales = scales.data.numpy()
+            if isinstance(scales, relax.Constant):
+                scales = scales.data.numpy()
+            elif isinstance(scales, relax.expr.ShapeExpr):
+                scales = [int(val.value) for val in scales.values]
+            else:
+                assert f"Type {type(scales)} for scale is currently unsupported."
             sizes = []
 
             for i, dim in enumerate(x.struct_info.shape):
                 sizes.append(cast(scales[i] * dim, "int64"))
             sizes = sizes[2:]
         else:
-            assert isinstance(
-                sizes, relax.Constant
-            ), "Only constant output size currently supported."
-            sizes = sizes.data.numpy().astype("int64").tolist()[2:]
+            if isinstance(sizes, relax.Constant):
+                sizes = sizes.data.numpy().astype("int64").tolist()[2:]
+            elif isinstance(sizes, relax.expr.ShapeExpr):
+                sizes = [int(val.value) for val in sizes.values][2:]
+            else:
+                assert f"Type {type(size)} for size is currently unsupported."
 
         return relax.op.image.resize2d(
             x,
@@ -2426,7 +2448,7 @@ class MaxUnpool(OnnxOpConverter):
             total_output_shape = output_shape
 
         elif pads is not None:
-            # Get pads in the proper format for relay.
+            # Get pads in the proper format
             pads = _np.concatenate([[0, 0, 0, 0], list(pads)], axis=0)
             pads = _np.reshape(pads, [-1, 2])
             # Compute the total padding per axis.
@@ -2487,6 +2509,20 @@ class LayerNormalization(OnnxOpConverter):
         axis = attr.get("axis", -1)
         epsilon = attr.get("epsilon", 1e-05)
 
+        gamma_shape = get_const_tuple(scale.struct_info.shape)
+
+        if bias is None:
+            seq_len = data.struct_info.shape[1].value
+            bias = relax.const([0.0] * seq_len, dtype="float32")
+        else:
+            beta_shape = get_const_tuple(bias.struct_info.shape)
+            if gamma_shape != beta_shape:
+                raise ValueError("gamma and beta shapes do not match")
+
+        axis = list(axis) if isinstance(axis, (list, tuple)) else [axis]
+        if len(axis) < len(gamma_shape):
+            axis.extend(range(axis[-1] + 1, axis[-1] + 1 + len(gamma_shape) - len(axis)))
+
         output = relax.op.nn.layer_norm(data, scale, bias, axis, epsilon)
         # Onnx layernorm has 3 outputs but only the first is used.
         # We construct two empty constants for this.
@@ -2504,6 +2540,29 @@ class ReduceMax(OnnxOpConverter):
         keepdims = attr.get("keepdims", 1)
         return relax.op.max(data, axes, keepdims)
 
+    @classmethod
+    def _impl_v18(cls, bb, inputs, attr, params):
+        data = inputs[0]
+        keepdims = attr.get("keepdims", 1)
+        noop_with_empty_axes = attr.get("noop_with_empty_axes", 0)
+
+        # Optional axes input
+        axes = None
+        if len(inputs) > 1 and inputs[1] is not None:
+            axes_const = get_constant(inputs[1], params)
+            assert isinstance(axes_const, relax.Constant), "Only constant axes currently supported"
+            axes = axes_const.data.numpy().tolist()
+
+        # If axes is empty and noop_with_empty_axes is False, reduce all dims
+        if not axes and not noop_with_empty_axes:
+            return relax.op.max(data, None, keepdims)
+        # If axes is empty and noop_with_empty_axes is True, return input unchanged
+        elif not axes and noop_with_empty_axes:
+            return data
+        # Otherwise reduce over specified axes
+        else:
+            return relax.op.max(data, axes, keepdims)
+
 
 class ReduceMin(OnnxOpConverter):
     """Converts an onnx ReduceMin node into an equivalent Relax expression."""
@@ -2514,6 +2573,29 @@ class ReduceMin(OnnxOpConverter):
         axes = attr.get("axes", None)
         keepdims = attr.get("keepdims", 1)
         return relax.op.min(data, axes, keepdims)
+
+    @classmethod
+    def _impl_v18(cls, bb, inputs, attr, params):
+        data = inputs[0]
+        keepdims = attr.get("keepdims", 1)
+        noop_with_empty_axes = attr.get("noop_with_empty_axes", 0)
+
+        # Optional axes input
+        axes = None
+        if len(inputs) > 1 and inputs[1] is not None:
+            axes_const = get_constant(inputs[1], params)
+            assert isinstance(axes_const, relax.Constant), "Only constant axes currently supported"
+            axes = axes_const.data.numpy().tolist()
+
+        # If axes is empty and noop_with_empty_axes is False, reduce all dims
+        if not axes and not noop_with_empty_axes:
+            return relax.op.min(data, None, keepdims)
+        # If axes is empty and noop_with_empty_axes is True, return input unchanged
+        elif not axes and noop_with_empty_axes:
+            return data
+        # Otherwise reduce over specified axes
+        else:
+            return relax.op.min(data, axes, keepdims)
 
 
 class ReduceSum(OnnxOpConverter):
@@ -2529,11 +2611,25 @@ class ReduceSum(OnnxOpConverter):
     @classmethod
     def _impl_v13(cls, bb, inputs, attr, params):
         data = inputs[0]
-        axes = inputs[1]
         keepdims = attr.get("keepdims", 1)
-        assert isinstance(axes, relax.Constant), "Only constant axes currently supported."
-        axes = axes.data.numpy().tolist()
-        return relax.op.sum(data, axes, keepdims)
+        noop_with_empty_axes = attr.get("noop_with_empty_axes", 0)
+
+        # Optional axes input
+        axes = None
+        if len(inputs) > 1 and inputs[1] is not None:
+            axes_const = get_constant(inputs[1], params)
+            assert isinstance(axes_const, relax.Constant), "Only constant axes currently supported"
+            axes = axes_const.data.numpy().tolist()
+
+        # If axes is empty and noop_with_empty_axes is 0, reduce all dimensions
+        if not axes and not noop_with_empty_axes:
+            return relax.op.sum(data, None, keepdims)
+        # If axes is empty and noop_with_empty_axes is 1, return the input data unchanged.
+        elif not axes and noop_with_empty_axes:
+            return data
+        # If axes is provided, reduce over the specified axes
+        else:
+            return relax.op.sum(data, axes, keepdims)
 
 
 class ReduceMean(OnnxOpConverter):
@@ -2546,6 +2642,29 @@ class ReduceMean(OnnxOpConverter):
         keepdims = attr.get("keepdims", 1)
         return relax.op.mean(data, axes, keepdims)
 
+    @classmethod
+    def _impl_v18(cls, bb, inputs, attr, params):
+        data = inputs[0]
+        keepdims = attr.get("keepdims", 1)
+        noop_with_empty_axes = attr.get("noop_with_empty_axes", 0)
+
+        # Optional axes input
+        axes = None
+        if len(inputs) > 1 and inputs[1] is not None:
+            axes_const = get_constant(inputs[1], params)
+            assert isinstance(axes_const, relax.Constant), "Only constant axes currently supported"
+            axes = axes_const.data.numpy().tolist()
+
+        # If axes is empty and noop_with_empty_axes is 0, reduce all dimensions
+        if not axes and not noop_with_empty_axes:
+            return relax.op.mean(data, None, keepdims)
+        # If axes is empty and noop_with_empty_axes is 1, return the input data unchanged.
+        elif not axes and noop_with_empty_axes:
+            return data
+        # If axes is provided, reduce over the specified axes
+        else:
+            return relax.op.mean(data, axes, keepdims)
+
 
 class ReduceProd(OnnxOpConverter):
     """Converts an onnx ReduceProd node into an equivalent Relax expression."""
@@ -2556,6 +2675,29 @@ class ReduceProd(OnnxOpConverter):
         axes = attr.get("axes", None)
         keepdims = attr.get("keepdims", 1)
         return relax.op.prod(data, axes, keepdims)
+
+    @classmethod
+    def _impl_v18(cls, bb, inputs, attr, params):
+        data = inputs[0]
+        keepdims = attr.get("keepdims", 1)
+        noop_with_empty_axes = attr.get("noop_with_empty_axes", 0)
+
+        # Optional axes input
+        axes = None
+        if len(inputs) > 1 and inputs[1] is not None:
+            axes_const = get_constant(inputs[1], params)
+            assert isinstance(axes_const, relax.Constant), "Only constant axes currently supported"
+            axes = axes_const.data.numpy().tolist()
+
+        # If axes is empty and noop_with_empty_axes is 0, reduce all dimensions
+        if not axes and not noop_with_empty_axes:
+            return relax.op.prod(data, None, keepdims)
+        # If axes is empty and noop_with_empty_axes is 1, return the input data unchanged.
+        elif not axes and noop_with_empty_axes:
+            return data
+        # If axes is provided, reduce over the specified axes
+        else:
+            return relax.op.prod(data, axes, keepdims)
 
 
 class ReduceLogSumExp(OnnxOpConverter):
@@ -2574,6 +2716,38 @@ class ReduceLogSumExp(OnnxOpConverter):
             out_x = relax.op.squeeze(out_x, axes)
         return out_x
 
+    @classmethod
+    def _impl_v18(cls, bb, inputs, attr, params):
+        x = inputs[0]
+        keepdims = attr.get("keepdims", 1)
+        noop_with_empty_axes = attr.get("noop_with_empty_axes", 0)
+
+        # Optional axes input (second input)
+        axes = None
+        if len(inputs) > 1 and inputs[1] is not None:
+            axes_const = get_constant(inputs[1], params)
+            assert isinstance(axes_const, relax.Constant), "Only constant axes currently supported"
+            axes = axes_const.data.numpy().tolist()
+
+        # Calculate LogSumExp
+        log_sum_exp = lambda axes: (
+            max_x := relax.op.max(x, axes, True),
+            exp_x := relax.op.exp(relax.op.subtract(x, max_x)),
+            sum_x := relax.op.sum(exp_x, axes, True),
+            out_x := relax.op.add(relax.op.log(sum_x), max_x),
+            relax.op.squeeze(out_x, axes) if not keepdims else out_x,
+        )[-1]
+
+        # If axes is empty and noop_with_empty_axes is 0, reduce all dimensions
+        if not axes and not noop_with_empty_axes:
+            return log_sum_exp(None)
+        # If axes is empty and noop_with_empty_axes is 1, return the input data unchanged.
+        elif not axes and noop_with_empty_axes:
+            return x
+        # If axes is provided, reduce over the specified axes
+        else:
+            return log_sum_exp(axes)
+
 
 class ReduceLogSum(OnnxOpConverter):
     """Converts an onnx ReduceLogSum node into an equivalent Relax expression."""
@@ -2584,6 +2758,29 @@ class ReduceLogSum(OnnxOpConverter):
         axes = attr.get("axes", None)
         keepdims = attr.get("keepdims", 1)
         return relax.op.log(relax.op.sum(data, axes, keepdims))
+
+    @classmethod
+    def _impl_v18(cls, bb, inputs, attr, params):
+        data = inputs[0]
+        keepdims = attr.get("keepdims", 1)
+        noop_with_empty_axes = attr.get("noop_with_empty_axes", 0)
+
+        # Optional axes input
+        axes = None
+        if len(inputs) > 1 and inputs[1] is not None:
+            axes_const = get_constant(inputs[1], params)
+            assert isinstance(axes_const, relax.Constant), "Only constant axes currently supported"
+            axes = axes_const.data.numpy().tolist()
+
+        # If axes is empty and noop_with_empty_axes is 0, reduce all dimensions
+        if not axes and not noop_with_empty_axes:
+            return relax.op.log(relax.op.sum(data, None, keepdims))
+        # If axes is empty and noop_with_empty_axes is 1, return the input data unchanged.
+        elif not axes and noop_with_empty_axes:
+            return data
+        # If axes is provided, reduce over the specified axes
+        else:
+            return relax.op.log(relax.op.sum(data, axes, keepdims))
 
 
 class ReduceSumSquare(OnnxOpConverter):
@@ -2596,6 +2793,29 @@ class ReduceSumSquare(OnnxOpConverter):
         keepdims = attr.get("keepdims", 1)
         return relax.op.sum(relax.op.multiply(data, data), axes, keepdims)
 
+    @classmethod
+    def _impl_v18(cls, bb, inputs, attr, params):
+        data = inputs[0]
+        keepdims = attr.get("keepdims", 1)
+        noop_with_empty_axes = attr.get("noop_with_empty_axes", 0)
+
+        # Optional axes input
+        axes = None
+        if len(inputs) > 1 and inputs[1] is not None:
+            axes_const = get_constant(inputs[1], params)
+            assert isinstance(axes_const, relax.Constant), "Only constant axes currently supported"
+            axes = axes_const.data.numpy().tolist()
+
+        # If axes is empty and noop_with_empty_axes is 0, reduce all dimensions
+        if not axes and not noop_with_empty_axes:
+            return relax.op.sum(relax.op.multiply(data, data), None, keepdims)
+        # If axes is empty and noop_with_empty_axes is 1, return the input data unchanged.
+        elif not axes and noop_with_empty_axes:
+            return data
+        # If axes is provided, reduce over the specified axes
+        else:
+            return relax.op.sum(relax.op.multiply(data, data), axes, keepdims)
+
 
 class ReduceL1(OnnxOpConverter):
     """Converts an onnx ReduceL1 node into an equivalent Relax expression."""
@@ -2607,6 +2827,29 @@ class ReduceL1(OnnxOpConverter):
         keepdims = attr.get("keepdims", 1)
         return relax.op.sum(relax.op.abs(data), axes, keepdims)
 
+    @classmethod
+    def _impl_v18(cls, bb, inputs, attr, params):
+        data = inputs[0]
+        keepdims = attr.get("keepdims", 1)
+        noop_with_empty_axes = attr.get("noop_with_empty_axes", 0)
+
+        # Optional axes input
+        axes = None
+        if len(inputs) > 1 and inputs[1] is not None:
+            axes_const = get_constant(inputs[1], params)
+            assert isinstance(axes_const, relax.Constant), "Only constant axes currently supported"
+            axes = axes_const.data.numpy().tolist()
+
+        # If axes is empty and noop_with_empty_axes is 0, reduce all dimensions
+        if not axes and not noop_with_empty_axes:
+            return relax.op.sum(relax.op.abs(data), None, keepdims)
+        # If axes is empty and noop_with_empty_axes is 1, return the input data unchanged.
+        elif not axes and noop_with_empty_axes:
+            return data
+        # If axes is provided, reduce over the specified axes
+        else:
+            return relax.op.sum(relax.op.abs(data), axes, keepdims)
+
 
 class ReduceL2(OnnxOpConverter):
     """Converts an onnx ReduceL2 node into an equivalent Relax expression."""
@@ -2617,6 +2860,29 @@ class ReduceL2(OnnxOpConverter):
         axes = attr.get("axes", None)
         keepdims = attr.get("keepdims", 1)
         return relax.op.sqrt(relax.op.sum(relax.op.multiply(data, data), axes, keepdims))
+
+    @classmethod
+    def _impl_v18(cls, bb, inputs, attr, params):
+        data = inputs[0]
+        keepdims = attr.get("keepdims", 1)
+        noop_with_empty_axes = attr.get("noop_with_empty_axes", 0)
+
+        # Optional axes input
+        axes = None
+        if len(inputs) > 1 and inputs[1] is not None:
+            axes_const = get_constant(inputs[1], params)
+            assert isinstance(axes_const, relax.Constant), "Only constant axes currently supported"
+            axes = axes_const.data.numpy().tolist()
+
+        # If axes is empty and noop_with_empty_axes is 0, reduce all dimensions
+        if not axes and not noop_with_empty_axes:
+            return relax.op.sqrt(relax.op.sum(relax.op.multiply(data, data), None, keepdims))
+        # If axes is empty and noop_with_empty_axes is 1, return the input data unchanged.
+        elif not axes and noop_with_empty_axes:
+            return data
+        # If axes is provided, reduce over the specified axes
+        else:
+            return relax.op.sqrt(relax.op.sum(relax.op.multiply(data, data), axes, keepdims))
 
 
 class ArgMax(OnnxOpConverter):
@@ -2848,6 +3114,35 @@ class NonZero(OnnxOpConverter):
         nonzero_numbers = tir.Var("nonzero_numbers", "int64")
         return bb.match_cast(
             relax.op.nonzero(inputs[0]), relax.TensorStructInfo((ndim, nonzero_numbers), "int64")
+        )
+
+
+class Upsample(OnnxOpConverter):
+    """Operator converter for Upsample (nearest mode)."""
+
+    @classmethod
+    def _impl_v9(cls, bb, inputs, attr, params):
+        scales = attr.get("scales")
+        assert len(scales) == 4
+        assert scales[0] == scales[1] == 1
+
+        inp_shape = [int(x) for x in inputs[0].struct_info.shape]
+        assert len(inp_shape) == 4
+        out_shape2d = [int(dim * scale) for dim, scale in zip(inp_shape[2:], scales[2:])]
+
+        mode = attr.get("mode", b"nearest").decode("ascii")
+        if mode == "nearest":
+            mode = "nearest_neighbor"
+        msg = f'Value {mode} in attribute "mode" of operator Upsample is not valid.'
+        assert mode in ("linear", "nearest_neighbor", "cubic"), msg
+
+        return relax.op.image.resize2d(
+            data=inputs[0],
+            roi=None,
+            size=relax.ShapeExpr(out_shape2d),  # (H, W)
+            layout="NCHW",
+            method=mode,
+            coordinate_transformation_mode="asymmetric",  # Align with Upsample
         )
 
 
@@ -3111,13 +3406,13 @@ def _get_convert_map():
         "BitwiseAnd": BitwiseAnd,
         "BitwiseOr": BitwiseOr,
         "BitwiseXor": BitwiseXor,
-        "BitwiseNot": BitwiseNot,
         "BitShift": BitShift,
         "And": And,
         "Or": Or,
         "Xor": Xor,
         "Not": Not,
         # Unary operators
+        "BitwiseNot": BitwiseNot,
         "Log": Log,
         "Exp": Exp,
         "Acos": Acos,
@@ -3243,7 +3538,7 @@ def _get_convert_map():
         # "RoiAlign": RoiAlign,
         # "NonMaxSuppression": NonMaxSuppression,
         # "GridSample": GridSample,
-        # "Upsample": Upsample,
+        "Upsample": Upsample,
         # others
         "DepthToSpace": DepthToSpace,
         "SpaceToDepth": SpaceToDepth,
@@ -3465,6 +3760,7 @@ class ONNXGraphImporter:
             # convert it to a tensor.
             shape_compatible_ops = [
                 "Reshape",
+                "Resize",
                 "ConstantOfShape",
                 "Gather",
                 "Slice",
@@ -3503,11 +3799,11 @@ class ONNXGraphImporter:
             if op_name in return_tuple_ops:
                 outputs_num = 1
             elif not isinstance(op, relax.Tuple):
-                if isinstance(op.checked_type, tvm.ir.type.TupleType):
+                if isinstance(op.struct_info, relax.TupleStructInfo):
                     # This is a var bound to a tuple. We need to unpack it and create
                     # a new tuple.
                     tuple_items = []
-                    for i in range(len(op.checked_type.fields)):
+                    for i in range(len(op.struct_info.fields)):
                         tuple_items.append(self.bb.emit(relax.TupleGetItem(op, i)))
                     op = relax.Tuple(tuple_items)
                     outputs_num = len(tuple_items)

@@ -19,6 +19,7 @@
 
 /*! \file src/relax/transform/lazy_transform_params.cc */
 
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/analysis.h>
 #include <tvm/relax/expr.h>
 #include <tvm/relax/expr_functor.h>
@@ -80,14 +81,14 @@ class LazyInputMutator : public ExprMutator {
           if (externally_visible_vars.count(var)) {
             return var;
           } else {
-            return NullOpt;
+            return std::nullopt;
           }
         });
 
     auto node = GetRef<Function>(func);
     node.CopyOnWrite()->params = new_params;
     node.CopyOnWrite()->ret_struct_info = new_ret_struct_info;
-    node = WithAttr(node, attr::kNumInput, Integer(num_input_params + 1));
+    node = WithAttr(node, attr::kNumInput, num_input_params + 1);
 
     plan_ = FunctionPlan{std::move(param_lookup), fget_param};
     auto output = Downcast<Function>(ExprMutator::VisitExpr_(node.get()));
@@ -192,7 +193,7 @@ class LazyOutputMutator : public ExprMutator {
       write_ptr->is_pure = false;
     }
     if (num_input_params.has_value()) {
-      node = WithAttr(node, attr::kNumInput, Integer(num_input_params.value() + 1));
+      node = WithAttr(node, attr::kNumInput, num_input_params.value() + 1);
     }
 
     auto output = Downcast<Function>(ExprMutator::VisitExpr_(node.get()));
@@ -248,7 +249,7 @@ namespace transform {
 
 Pass LazyGetInput() {
   auto pass_func = [](Function func, IRModule, PassContext) -> Function {
-    if (!func->GetAttr<String>(tvm::attr::kGlobalSymbol).defined()) {
+    if (!func->GetAttr<String>(tvm::attr::kGlobalSymbol).has_value()) {
       return func;
     }
     return WithLazyInputs(func);
@@ -259,11 +260,14 @@ Pass LazyGetInput() {
                             /*required=*/{});
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.LazyGetInput").set_body_typed(LazyGetInput);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.transform.LazyGetInput", LazyGetInput);
+});
 
 Pass LazySetOutput() {
   auto pass_func = [](Function func, IRModule, PassContext) -> Function {
-    if (!func->GetAttr<String>(tvm::attr::kGlobalSymbol).defined()) {
+    if (!func->GetAttr<String>(tvm::attr::kGlobalSymbol).has_value()) {
       return func;
     }
     return WithLazyOutputs(func);
@@ -274,7 +278,10 @@ Pass LazySetOutput() {
                             /*required=*/{});
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.LazySetOutput").set_body_typed(LazySetOutput);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.transform.LazySetOutput", LazySetOutput);
+});
 
 }  // namespace transform
 }  // namespace relax

@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 import pytest
+import tvm_ffi
 import tvm
 from tvm import te
 import numpy as np
@@ -41,12 +42,6 @@ def test_array_save_load_json():
 def test_dir_array():
     a = tvm.runtime.convert([1, 2, 3])
     assert dir(a)
-
-
-def test_getattr_array():
-    a = tvm.runtime.convert([1, 2, 3])
-    assert getattr(a, "type_key") == "Array"
-    assert not hasattr(a, "test_key")
 
 
 def test_map():
@@ -96,8 +91,7 @@ def test_getattr_map():
     a = te.var("a")
     b = te.var("b")
     amap = tvm.runtime.convert({a: 2, b: 3})
-    assert getattr(amap, "type_key") == "Map"
-    assert not hasattr(amap, "test_key")
+    assert isinstance(amap, tvm_ffi.Map)
 
 
 def test_in_container():
@@ -122,15 +116,14 @@ def test_return_variant_type():
     assert res_even == 21
 
     res_odd = func(17)
-    assert isinstance(res_odd, tvm.runtime.String)
     assert res_odd == "argument was odd"
 
 
 def test_pass_variant_type():
     func = tvm.get_global_func("testing.AcceptsVariant")
 
-    assert func("string arg") == "runtime.String"
-    assert func(17) == "IntImm"
+    assert func("string arg") == "ffi.String"
+    assert func(17) == "ir.IntImm"
 
 
 def test_pass_incorrect_variant_type():

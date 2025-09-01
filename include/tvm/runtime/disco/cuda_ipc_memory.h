@@ -20,7 +20,7 @@
 #ifndef TVM_RUNTIME_DISCO_CUDA_IPC_MEMORY_H_
 #define TVM_RUNTIME_DISCO_CUDA_IPC_MEMORY_H_
 
-#include <tvm/runtime/c_runtime_api.h>
+#include <tvm/runtime/base.h>
 #include <tvm/runtime/memory/memory_manager.h>
 #include <tvm/runtime/object.h>
 
@@ -71,8 +71,6 @@ class CUDAIPCMemoryObj : public Object {
   int barrier_flag;
 
   static constexpr const char* _type_key = "tvm.runtime.disco.cuda_ipc_memory";
-  static constexpr const bool _type_has_method_sequal_reduce = false;
-  static constexpr const bool _type_has_method_shash_reduce = false;
   TVM_DECLARE_BASE_OBJECT_INFO(CUDAIPCMemoryObj, Object);
 };
 

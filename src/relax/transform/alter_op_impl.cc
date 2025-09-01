@@ -24,6 +24,7 @@
  * true.
  */
 #include <tvm/arith/analyzer.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/ir/attrs.h>
 #include <tvm/node/serialization.h>
 #include <tvm/relax/analysis.h>
@@ -81,8 +82,8 @@ class AlterOpImplMutator : public ExprMutator {
  public:
   AlterOpImplMutator(const IRModule& mod, const Map<String, tir::PrimFunc>& op_impl_map,
                      const Map<String, Array<IndexMap>>& op_buffer_transforms_,
-                     const Map<String, Array<Array<IntImm>>>& axis_separators_,
-                     const Map<String, Array<Array<IntImm>>>& input_axis_separators_)
+                     const Map<String, Optional<Array<Array<IntImm>>>>& axis_separators_,
+                     const Map<String, Optional<Array<Array<IntImm>>>>& input_axis_separators_)
       : ExprMutator(mod),
         mod_(mod),
         op_impl_map_(op_impl_map),
@@ -122,7 +123,7 @@ class AlterOpImplMutator : public ExprMutator {
 
     // If the callee does not have kOperatorName attribute or no replacement is requested for
     // it, nothing to do here.
-    if (!maybe_op_kind.defined() || op_impl_map_.count(maybe_op_kind.value()) == 0) return call;
+    if (!maybe_op_kind.has_value() || op_impl_map_.count(maybe_op_kind.value()) == 0) return call;
     auto op_kind = maybe_op_kind.value();
 
     const auto& replacement_func = op_impl_map_[op_kind];
@@ -413,9 +414,9 @@ class AlterOpImplMutator : public ExprMutator {
   /*! \brief Map from kOperatorName attribute to the layout transforms on i/o buffers */
   const Map<String, Array<IndexMap>>& op_buffer_transforms__;
   /*! \brief Map from kOperatorName attribute to the axis separatos on i/o buffers */
-  const Map<String, Array<Array<IntImm>>>& op_buffer_axis_separators__;
+  const Map<String, Optional<Array<Array<IntImm>>>>& op_buffer_axis_separators__;
   /*! \brief Map from kOperatorName attribute to the input axis separatos */
-  const Map<String, Array<Array<IntImm>>>& op_buffer_input_axis_separators__;
+  const Map<String, Optional<Array<Array<IntImm>>>>& op_buffer_input_axis_separators__;
 
   const Op& call_tir_op_ = Op::Get("relax.call_tir");
   const Op& layout_transform_op_ = Op::Get("relax.layout_transform");
@@ -425,10 +426,9 @@ namespace transform {
 
 Pass AlterOpImpl(const Map<String, tir::PrimFunc>& op_impl_map,
                  const Map<String, Array<IndexMap>>& op_buffer_transforms_,
-                 const Map<String, Array<Array<IntImm>>>& axis_separators_,
-                 const Map<String, Array<Array<IntImm>>>& input_axis_separators_) {
-  runtime::TypedPackedFunc<IRModule(IRModule, PassContext)> pass_func = [=](IRModule mod,
-                                                                            PassContext pc) {
+                 const Map<String, Optional<Array<Array<IntImm>>>>& axis_separators_,
+                 const Map<String, Optional<Array<Array<IntImm>>>>& input_axis_separators_) {
+  auto pass_func = [=](IRModule mod, PassContext pc) {
     return AlterOpImplMutator(mod, op_impl_map, op_buffer_transforms_, axis_separators_,
                               input_axis_separators_)
         .Run();
@@ -439,7 +439,10 @@ Pass AlterOpImpl(const Map<String, tir::PrimFunc>& op_impl_map,
                           /*required=*/{});
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.AlterOpImpl").set_body_typed(AlterOpImpl);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.transform.AlterOpImpl", AlterOpImpl);
+});
 
 }  // namespace transform
 }  // namespace relax

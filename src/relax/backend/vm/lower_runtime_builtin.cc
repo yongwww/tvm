@@ -20,6 +20,7 @@
  * \file src/relax/backend/vm/lower_runtime_builtin.cc
  * \brief Lowers most builtin functions and packed calls.
  */
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/analysis.h>
 #include <tvm/relax/attrs/op.h>
 #include <tvm/relax/backend.h>
@@ -225,14 +226,16 @@ Expr LowerRuntimeBuiltin(const Expr& e) { return LowerRuntimeBuiltinMutator().Vi
 namespace transform {
 
 Pass LowerRuntimeBuiltin() {
-  runtime::TypedPackedFunc<Function(Function, IRModule, PassContext)> pass_func =
-      [=](Function f, IRModule m, PassContext pc) {
-        return Downcast<Function>(LowerRuntimeBuiltin(f));
-      };
+  auto pass_func = [=](Function f, IRModule m, PassContext pc) {
+    return Downcast<Function>(LowerRuntimeBuiltin(f));
+  };
   return CreateFunctionPass(pass_func, 0, "LowerRuntimeBuiltin", {});
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.LowerRuntimeBuiltin").set_body_typed(LowerRuntimeBuiltin);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.transform.LowerRuntimeBuiltin", LowerRuntimeBuiltin);
+});
 
 }  // namespace transform
 }  // namespace relax

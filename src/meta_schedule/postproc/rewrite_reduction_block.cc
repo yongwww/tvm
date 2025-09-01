@@ -16,6 +16,8 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+#include <tvm/ffi/reflection/registry.h>
+
 #include "../utils.h"
 
 namespace tvm {
@@ -109,6 +111,11 @@ namespace meta_schedule {
 /*! \brief Rewrite reduction block by moving the init block out */
 class RewriteReductionBlockNode : public PostprocNode {
  public:
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<RewriteReductionBlockNode>();
+  }
+
   // Inherited from PostprocNode
   void InitializeWithTuneContext(const TuneContext& context) final {}
   // Inherited from PostprocNode
@@ -118,8 +125,6 @@ class RewriteReductionBlockNode : public PostprocNode {
     ObjectPtr<RewriteReductionBlockNode> n = make_object<RewriteReductionBlockNode>(*this);
     return Postproc(n);
   }
-
-  void VisitAttrs(tvm::AttrVisitor* v) {}
 
   static constexpr const char* _type_key = "meta_schedule.RewriteReductionBlock";
   TVM_DECLARE_FINAL_OBJECT_INFO(RewriteReductionBlockNode, PostprocNode);
@@ -142,17 +147,17 @@ bool RewriteReductionBlockNode::Apply(const tir::Schedule& sch) {
       tir::BlockRV init_block_rv = sch->DecomposeReduction(block_rv, loop_rvs[decompose_point]);
 
       // Rewrite auto tensorization related annotations
-      if (tir::GetAnn<String>(block_sref, tir::attr::meta_schedule_auto_tensorize).defined()) {
+      if (tir::GetAnn<String>(block_sref, tir::attr::meta_schedule_auto_tensorize).has_value()) {
         // Remove tensorization annotation as it shouldn't be propagated to the init block.
         sch->Unannotate(init_block_rv, tir::attr::meta_schedule_auto_tensorize);
         Optional<String> tensorize_init =
             tir::GetAnn<String>(block_sref, tir::attr::meta_schedule_auto_tensorize_init);
         // The annotation of tensorization of the init statement should be moved to the init block
         // after 'DecomposeReduction'.
-        // Annotate to hint `RewriteTensorize` postprocessor even if tensorize_init is NullOpt.
+        // Annotate to hint `RewriteTensorize` postprocessor even if tensorize_init is std::nullopt.
         sch->Annotate(init_block_rv, tir::attr::meta_schedule_auto_tensorize,
                       tensorize_init.value_or(""));
-        if (tensorize_init.defined()) {
+        if (tensorize_init.has_value()) {
           sch->Unannotate(block_rv, tir::attr::meta_schedule_auto_tensorize_init);
           sch->Unannotate(init_block_rv, tir::attr::meta_schedule_auto_tensorize_init);
         }
@@ -171,9 +176,13 @@ Postproc Postproc::RewriteReductionBlock() {
   return Postproc(n);
 }
 
-TVM_REGISTER_NODE_TYPE(RewriteReductionBlockNode);
-TVM_REGISTER_GLOBAL("meta_schedule.PostprocRewriteReductionBlock")
-    .set_body_typed(Postproc::RewriteReductionBlock);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("meta_schedule.PostprocRewriteReductionBlock",
+                        Postproc::RewriteReductionBlock);
+});
+
+TVM_FFI_STATIC_INIT_BLOCK({ RewriteReductionBlockNode::RegisterReflection(); });
 
 }  // namespace meta_schedule
 }  // namespace tvm

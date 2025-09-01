@@ -85,7 +85,6 @@ def get_vmpy_operator(operations):
                 vn_ind = T.axis.remap("S", [n])
                 c_buffer[vn_ind, T.ramp(0, 1, 128)] = T.call_llvm_intrin(
                     T.llvm_lookup_intrinsic_id("llvm.hexagon.V6.vmpybusv.128B"),
-                    T.uint32(2),
                     T.reinterpret(a_buffer[vn_ind, T.ramp(0, 1, 128)], dtype="int32x32"),
                     T.reinterpret(b_buffer[vn_ind, T.ramp(0, 1, 128)], dtype="int32x32"),
                     dtype="int16x128",
@@ -108,7 +107,6 @@ def get_vadd_operator(operations):
                 vn_ind = T.axis.remap("S", [n])
                 c_buffer[vn_ind, T.ramp(0, 1, 128)] = T.call_llvm_intrin(
                     T.llvm_lookup_intrinsic_id("llvm.hexagon.V6.vaddubh.128B"),
-                    T.uint32(2),
                     T.reinterpret(a_buffer[vn_ind, T.ramp(0, 1, 128)], dtype="int32x32"),
                     T.reinterpret(b_buffer[vn_ind, T.ramp(0, 1, 128)], dtype="int32x32"),
                     dtype="int16x128",
@@ -131,7 +129,6 @@ def get_vrmpy_operator(operations):
                 vn_ind = T.axis.remap("S", [n])
                 c_buffer[vn_ind, T.ramp(0, 1, 32)] = T.call_llvm_intrin(
                     T.llvm_lookup_intrinsic_id("llvm.hexagon.V6.vrmpyubv.128B"),
-                    T.uint32(2),
                     T.reinterpret(a_buffer[vn_ind, T.ramp(0, 1, 128)], dtype="int32x32"),
                     T.reinterpret(b_buffer[vn_ind, T.ramp(0, 1, 128)], dtype="int32x32"),
                     dtype="int32x32",
@@ -144,7 +141,7 @@ def evaluate(hexagon_session, shape_dtypes, expected_output_producer, sch):
     """Evaluate schedule."""
     a_shape, a_dtype, b_shape, b_dtype, c_shape, c_dtype = shape_dtypes
 
-    func_tir = tvm.build(sch.mod["main"], target=get_hexagon_target("v68"))
+    func_tir = tvm.compile(sch.mod["main"], target=get_hexagon_target("v68"))
     module = hexagon_session.load_module(func_tir)
 
     a = np.random.randint(0, 16, a_shape, dtype=a_dtype)
@@ -160,10 +157,10 @@ def evaluate(hexagon_session, shape_dtypes, expected_output_producer, sch):
     repeat = 1
 
     timer = module.time_evaluator(
-        "__tvm_main__", hexagon_session.device, number=number, repeat=repeat
+        "__tvm_ffi_main__", hexagon_session.device, number=number, repeat=repeat
     )
     runtime = timer(a_hexagon, b_hexagon, c_hexagon)
-    tvm.testing.assert_allclose(c_hexagon.asnumpy(), expected_output_producer(c_shape, a, b))
+    tvm.testing.assert_allclose(c_hexagon.numpy(), expected_output_producer(c_shape, a, b))
 
     return round(runtime.mean * 1000, 6)
 

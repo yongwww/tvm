@@ -21,6 +21,7 @@
  * \file tvm/relax/distributed/transform/propagate_sharding.cc
  * \brief Pass for propagating sharding information.
  */
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/analysis.h>
 #include <tvm/relax/attrs/distributed.h>
 #include <tvm/relax/attrs/linear_algebra.h>
@@ -429,7 +430,7 @@ class DistributedIRBuilder : public ExprMutator {
       }
     }
     auto new_body = VisitWithNewScope(func->body, new_params);
-    Function new_func(new_params, new_body, NullOpt, func->is_pure, func->attrs);
+    Function new_func(new_params, new_body, std::nullopt, func->is_pure, func->attrs);
     return new_func;
   }
 
@@ -610,12 +611,15 @@ class DistributedIRBuilder : public ExprMutator {
 namespace transform {
 
 Pass PropagateSharding() {
-  runtime::TypedPackedFunc<IRModule(IRModule, PassContext)> pass_func =
-      [=](IRModule m, PassContext pc) { return DistributedIRBuilder(m).BuildDistributedIR(); };
+  auto pass_func = [=](IRModule m, PassContext pc) {
+    return DistributedIRBuilder(m).BuildDistributedIR();
+  };
   return CreateModulePass(pass_func, 1, "PropagateSharding", {});
 }
-TVM_REGISTER_GLOBAL("relax.distributed.transform.PropagateSharding")
-    .set_body_typed(PropagateSharding);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.distributed.transform.PropagateSharding", PropagateSharding);
+});
 }  // namespace transform
 
 }  // namespace distributed

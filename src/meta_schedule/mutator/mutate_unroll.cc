@@ -16,6 +16,8 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+#include <tvm/ffi/reflection/registry.h>
+
 #include "../utils.h"
 
 namespace tvm {
@@ -50,7 +52,11 @@ using tir::Trace;
 /*! \brief Create a Mutator that mutates auto unroll step */
 class MutateUnrollNode : public MutatorNode {
  public:
-  void VisitAttrs(tvm::AttrVisitor* v) {}
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<MutateUnrollNode>();
+  }
+
   static constexpr const char* _type_key = "meta_schedule.MutateUnroll";
   TVM_DECLARE_FINAL_OBJECT_INFO(MutateUnrollNode, MutatorNode);
 
@@ -113,20 +119,19 @@ bool FindUnrollDecision(const Trace& trace, TRandState* rand_state,
   const InstructionNode* sample_inst = sample_insts.at(var_rv);
   ICHECK_EQ(sample_inst->attrs.size(), 2);
   candidate->inst = GetRef<Instruction>(sample_inst);
-  candidate->decision =
-      Downcast<runtime::Int>(trace->decisions[GetRef<Instruction>(sample_inst)])->value;
-  candidate->probs = support::AsVector<runtime::Float, double>(
-      Downcast<Array<runtime::Float>>(sample_inst->attrs[1]));
+  candidate->decision = Downcast<IntImm>(trace->decisions[GetRef<Instruction>(sample_inst)])->value;
+  candidate->probs =
+      support::AsVector<FloatImm, double>(Downcast<Array<FloatImm>>(sample_inst->attrs[1]));
   return true;
 }
 
 Optional<Trace> MutateUnrollNode::Apply(const Trace& trace, TRandState* rand_state) {
   Candidate candidate;
   if (!FindUnrollDecision(trace, rand_state, &candidate)) {
-    return NullOpt;
+    return std::nullopt;
   }
   if (candidate.probs.size() == 0) {
-    return NullOpt;
+    return std::nullopt;
   }
   candidate.probs.erase(candidate.probs.begin() + candidate.decision);
   int result = tir::MakeMultinomialSampler(rand_state, candidate.probs)();
@@ -138,8 +143,12 @@ Optional<Trace> MutateUnrollNode::Apply(const Trace& trace, TRandState* rand_sta
 
 Mutator Mutator::MutateUnroll() { return Mutator(make_object<MutateUnrollNode>()); }
 
-TVM_REGISTER_NODE_TYPE(MutateUnrollNode);
-TVM_REGISTER_GLOBAL("meta_schedule.MutatorMutateUnroll").set_body_typed(Mutator::MutateUnroll);
+TVM_FFI_STATIC_INIT_BLOCK({ MutateUnrollNode::RegisterReflection(); });
+
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("meta_schedule.MutatorMutateUnroll", Mutator::MutateUnroll);
+});
 
 }  // namespace meta_schedule
 }  // namespace tvm

@@ -20,7 +20,8 @@
 /*!
  * \file inject_virtual_thread.cc
  */
-#include <tvm/runtime/registry.h>
+#include <tvm/ffi/function.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/tir/builtin.h>
 #include <tvm/tir/expr.h>
 #include <tvm/tir/stmt_functor.h>
@@ -343,7 +344,7 @@ class VTInjector : public arith::IRMutatorWithAnalyzer {
     visit_touched_var_ = false;
     ICHECK_EQ(max_loop_depth_, 0);
     Stmt then_case = this->VisitStmt(op->then_case);
-    Optional<Stmt> else_case = NullOpt;
+    Optional<Stmt> else_case = std::nullopt;
     if (op->else_case) {
       int temp = max_loop_depth_;
       max_loop_depth_ = 0;
@@ -399,7 +400,7 @@ class VTInjector : public arith::IRMutatorWithAnalyzer {
       // place v on highest dimension.
 
       // TODO(Lunderberg): Move pass to apply before
-      // StorageFlatten/FlattenBuffer.  Would rewrite the Buffer to
+      // FlattenBuffer.  Would rewrite the Buffer to
       // add the injected virtual thread as the first index.
       ICHECK_EQ(extents.size(), 1)
           << "InjectVirtualThread expects rewritten allocations to be flat memory.";
@@ -506,10 +507,6 @@ class VirtualThreadInjector : public arith::IRMutatorWithAnalyzer {
       return stmt;
     }
   }
-
-  Stmt VisitStmt_(const ProducerStoreNode* op) final {
-    LOG(FATAL) << "Need to call StorageFlatten first";
-  }
 };
 
 namespace transform {
@@ -527,7 +524,10 @@ Pass InjectVirtualThread() {
   return CreatePrimFuncPass(pass_func, 0, "tir.InjectVirtualThread", {});
 }
 
-TVM_REGISTER_GLOBAL("tir.transform.InjectVirtualThread").set_body_typed(InjectVirtualThread);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("tir.transform.InjectVirtualThread", InjectVirtualThread);
+});
 
 }  // namespace transform
 

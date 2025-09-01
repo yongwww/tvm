@@ -21,7 +21,8 @@
  * \brief Inject double buffering optimization for data fetch.
  * \file inject_double_buffer.cc
  */
-#include <tvm/runtime/registry.h>
+#include <tvm/ffi/function.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/tir/op.h>
 #include <tvm/tir/stmt_functor.h>
 #include <tvm/tir/transform.h>
@@ -31,12 +32,18 @@
 namespace tvm {
 namespace tir {
 
-struct InjectDoubleBufferConfigNode : public tvm::AttrsNode<InjectDoubleBufferConfigNode> {
+struct InjectDoubleBufferConfigNode : public AttrsNodeReflAdapter<InjectDoubleBufferConfigNode> {
   int split_loop;
 
-  TVM_DECLARE_ATTRS(InjectDoubleBufferConfigNode, "tir.transform.InjectDoubleBufferConfig") {
-    TVM_ATTR_FIELD(split_loop).describe("Split loop factors").set_default(1);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<InjectDoubleBufferConfigNode>().def_ro(
+        "split_loop", &InjectDoubleBufferConfigNode::split_loop, "Split loop factors",
+        refl::DefaultValue(1));
   }
+
+  static constexpr const char* _type_key = "tir.transform.InjectDoubleBufferConfig";
+  TVM_FFI_DECLARE_FINAL_OBJECT_INFO(InjectDoubleBufferConfigNode, BaseAttrsNode);
 };
 
 class InjectDoubleBufferConfig : public Attrs {
@@ -45,7 +52,8 @@ class InjectDoubleBufferConfig : public Attrs {
                                             InjectDoubleBufferConfigNode);
 };
 
-TVM_REGISTER_NODE_TYPE(InjectDoubleBufferConfigNode);
+TVM_FFI_STATIC_INIT_BLOCK({ InjectDoubleBufferConfigNode::RegisterReflection(); });
+
 TVM_REGISTER_PASS_CONFIG_OPTION("tir.InjectDoubleBuffer", InjectDoubleBufferConfig);
 
 // Detect double buffer variables.
@@ -110,8 +118,7 @@ class DoubleBufferInjector : public StmtExprMutator {
       entry.scope = GetPtrStorageScope(op->buffer_var);
 
       ICHECK_EQ(op->extents.size(), 1) << "InjectDoubleBuffer expects flat 1-d buffers.  "
-                                       << "Has StorageFlatten (TE-based schedules) or "
-                                       << "FlattenBuffer (TIR-based schedules) been run?";
+                                       << "Has FlattenBuffer been run?";
       entry.stride = op->extents[0];
       Stmt stmt = StmtExprMutator::VisitStmt_(op);
       op = stmt.as<AllocateNode>();
@@ -188,15 +195,14 @@ class DoubleBufferInjector : public StmtExprMutator {
       ICHECK(e.switch_write_var.defined());
 
       ICHECK_EQ(node->indices.size(), 1) << "InjectDoubleBuffer expects flat 1-d buffers.  "
-                                         << "Has StorageFlatten (TE-based schedules) or "
-                                         << "FlattenBuffer (TIR-based schedules) been run?";
+                                         << "Has FlattenBuffer been run?";
 
       auto writer = node.CopyOnWrite();
       writer->buffer = GetRemappedBuffer(node->buffer, e.stride);
       writer->indices = {e.switch_write_var * e.stride + node->indices[0]};
     }
 
-    return std::move(node);
+    return node;
   }
 
   PrimExpr VisitExpr_(const BufferLoadNode* op) final {
@@ -208,15 +214,14 @@ class DoubleBufferInjector : public StmtExprMutator {
       ICHECK(e.switch_read_var.defined());
 
       ICHECK_EQ(node->indices.size(), 1) << "InjectDoubleBuffer expects flat 1-d buffers.  "
-                                         << "Has StorageFlatten (TE-based schedules) or "
-                                         << "FlattenBuffer (TIR-based schedules) been run?";
+                                         << "Has FlattenBuffer been run?";
 
       auto writer = node.CopyOnWrite();
       writer->buffer = GetRemappedBuffer(node->buffer, e.stride);
       writer->indices = {e.switch_read_var * e.stride + node->indices[0]};
     }
 
-    return std::move(node);
+    return node;
   }
 
   Buffer GetRemappedBuffer(Buffer buf, PrimExpr stride) {
@@ -228,12 +233,11 @@ class DoubleBufferInjector : public StmtExprMutator {
 
     ICHECK(stride.defined());
     // TODO(Lunderberg): Move this pass to before
-    // StorageFlatten/FlattenBuffer.  That will simplify the
+    // FlattenBuffer.  That will simplify the
     // implementation, to be the insertion of a new dimension for the
     // buffer, rather than adjusting the other indices.
     ICHECK_EQ(buf->shape.size(), 1) << "InjectDoubleBuffer expects flat 1-d buffers.  "
-                                    << "Has StorageFlatten (TE-based schedules) or "
-                                    << "FlattenBuffer (TIR-based schedules) been run?";
+                                    << "Has FlattenBuffer been run?";
 
     // Stride gives the distance between the two halves of the
     // double-buffer, not the stride of the buffer's index.
@@ -323,7 +327,10 @@ Pass InjectDoubleBuffer() {
   return CreatePrimFuncPass(pass_func, 0, "tir.InjectDoubleBuffer", {});
 }
 
-TVM_REGISTER_GLOBAL("tir.transform.InjectDoubleBuffer").set_body_typed(InjectDoubleBuffer);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("tir.transform.InjectDoubleBuffer", InjectDoubleBuffer);
+});
 
 }  // namespace transform
 

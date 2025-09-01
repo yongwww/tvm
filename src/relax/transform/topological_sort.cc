@@ -20,6 +20,7 @@
  * \file src/relax/transform/topological_sort.cc
  * \brief Perform a topological sort of Dataflow blocks
  */
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/analysis.h>
 #include <tvm/relax/expr_functor.h>
 #include <tvm/relax/struct_info.h>
@@ -98,7 +99,7 @@ class BindingOrderCollector : ExprVisitor {
     // If there is a variable without any inputs (e.g. `R.const(1)`)
     // or an unused variable, these must be handled somewhere, to
     // ensure they are visited corrected.  It's easiest to perform the
-    // depth/breadth-first search if handled here, with `NullOpt`
+    // depth/breadth-first search if handled here, with `std::nullopt`
     // acting as a special value, so that the later traversal doesn't
     // need to check for this special case.
     std::vector<DataflowNode> zero_input_bindings;
@@ -247,7 +248,7 @@ class TopologicalSorter : public ExprMutator {
 
     std::unordered_set<DataflowNode> visited;
 
-    // Given a variable that has just been defined (or NullOpt for the
+    // Given a variable that has just been defined (or std::nullopt for the
     // function's output), mark nodes as ready to visit.
     auto push_descendents_to_stack = [&](const DataflowNode& var) {
       auto it = forward_edge_lookup.find(var);
@@ -342,34 +343,37 @@ Pass TopologicalSort(TraversalOrder order, StartingLocation starting_location) {
   return relax::transform::CreateFunctionPass(pass_func, 0, "TopologicalSort", {});
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.TopologicalSort")
-    .set_body_typed([](String order_str, String direction_str) -> Pass {
-      TraversalOrder order = [&]() {
-        if (order_str == "depth-first") {
-          return TraversalOrder::DepthFirst;
-        } else if (order_str == "breadth-first") {
-          return TraversalOrder::BreadthFirst;
-        } else {
-          LOG(FATAL) << "ValueError: "
-                     << "Invalid value for traversal order: \"" << order_str << "\".  "
-                     << "Allowed values are \"depth-first\" or \"breadth-first\"";
-        }
-      }();
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def(
+      "relax.transform.TopologicalSort", [](String order_str, String direction_str) -> Pass {
+        TraversalOrder order = [&]() {
+          if (order_str == "depth-first") {
+            return TraversalOrder::DepthFirst;
+          } else if (order_str == "breadth-first") {
+            return TraversalOrder::BreadthFirst;
+          } else {
+            LOG(FATAL) << "ValueError: "
+                       << "Invalid value for traversal order: \"" << order_str << "\".  "
+                       << "Allowed values are \"depth-first\" or \"breadth-first\"";
+          }
+        }();
 
-      StartingLocation starting_location = [&]() {
-        if (direction_str == "from-inputs") {
-          return StartingLocation::FromInputs;
-        } else if (direction_str == "from-outputs") {
-          return StartingLocation::FromOutputs;
-        } else {
-          LOG(FATAL) << "ValueError: "
-                     << "Invalid value for starting location: \"" << direction_str << "\".  "
-                     << "Allowed values are \"from-inputs\" or \"from-outputs\"";
-        }
-      }();
+        StartingLocation starting_location = [&]() {
+          if (direction_str == "from-inputs") {
+            return StartingLocation::FromInputs;
+          } else if (direction_str == "from-outputs") {
+            return StartingLocation::FromOutputs;
+          } else {
+            LOG(FATAL) << "ValueError: "
+                       << "Invalid value for starting location: \"" << direction_str << "\".  "
+                       << "Allowed values are \"from-inputs\" or \"from-outputs\"";
+          }
+        }();
 
-      return TopologicalSort(order, starting_location);
-    });
+        return TopologicalSort(order, starting_location);
+      });
+});
 
 }  // namespace transform
 

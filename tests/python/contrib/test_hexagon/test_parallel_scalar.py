@@ -87,7 +87,7 @@ def evaluate(hexagon_session, operations, expected, sch):
     shape = operations
     dtype = "float64"
 
-    func_tir = tvm.build(sch.mod["main"], target=get_hexagon_target("v68"))
+    func_tir = tvm.compile(sch.mod["main"], target=get_hexagon_target("v68"))
     module = hexagon_session.load_module(func_tir)
 
     # np.random.random returns float64 by default, but make the cast explicit
@@ -105,11 +105,11 @@ def evaluate(hexagon_session, operations, expected, sch):
     repeat = 1
 
     timer = module.time_evaluator(
-        "__tvm_main__", hexagon_session.device, number=number, repeat=repeat
+        "__tvm_ffi_main__", hexagon_session.device, number=number, repeat=repeat
     )
     runtime = timer(a_hexagon, b_hexagon, c_hexagon)
 
-    tvm.testing.assert_allclose(c_hexagon.asnumpy(), expected(a, b))
+    tvm.testing.assert_allclose(c_hexagon.numpy(), expected(a, b))
 
     return round(runtime.mean * 1000, 6)
 

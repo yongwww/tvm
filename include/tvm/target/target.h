@@ -24,8 +24,12 @@
 #ifndef TVM_TARGET_TARGET_H_
 #define TVM_TARGET_TARGET_H_
 
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/ir/expr.h>
+#include <tvm/ir/function.h>
+#include <tvm/node/attr_registry_map.h>
 #include <tvm/node/node.h>
+#include <tvm/runtime/device_api.h>
 #include <tvm/support/with.h>
 #include <tvm/target/target_kind.h>
 
@@ -53,9 +57,9 @@ class TargetNode : public Object {
   /*! \brief Keys for this target */
   Array<String> keys;
   /*! \brief Collection of attributes */
-  Map<String, ObjectRef> attrs;
+  Map<String, Any> attrs;
   /*! \brief Target features */
-  Map<String, ObjectRef> features;
+  Map<String, Any> features;
 
   /*!
    * \brief The raw string representation of the target
@@ -64,7 +68,7 @@ class TargetNode : public Object {
    */
   TVM_DLL const std::string& str() const;
   /*! \return Export target to JSON-like configuration */
-  TVM_DLL Map<String, ObjectRef> Export() const;
+  TVM_DLL Map<String, ffi::Any> Export() const;
   /*! \return The Optional<Target> typed target host of the TargetNode */
   TVM_DLL Optional<Target> GetHost() const;
   /*! \return The device type for this target */
@@ -89,13 +93,15 @@ class TargetNode : public Object {
    */
   String ToDebugString() const;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("kind", &kind);
-    v->Visit("tag", &tag);
-    v->Visit("keys", &keys);
-    v->Visit("attrs", &attrs);
-    v->Visit("features", &features);
-    v->Visit("host", &host);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<TargetNode>()
+        .def_ro("kind", &TargetNode::kind)
+        .def_ro("tag", &TargetNode::tag)
+        .def_ro("keys", &TargetNode::keys)
+        .def_ro("attrs", &TargetNode::attrs)
+        .def_ro("features", &TargetNode::features)
+        .def_ro("host", &TargetNode::host);
   }
 
   /*!
@@ -103,25 +109,15 @@ class TargetNode : public Object {
    * \tparam TObjectRef Type of the attribute
    * \param attr_key The name of the attribute key
    * \param default_value The value returned if the key is not present
-   * \return An optional, NullOpt if not found, otherwise the value found
+   * \return An optional, std::nullopt if not found, otherwise the value found
    */
   template <typename TObjectRef>
   Optional<TObjectRef> GetAttr(
       const std::string& attr_key,
-      Optional<TObjectRef> default_value = Optional<TObjectRef>(nullptr)) const {
-    static_assert(std::is_base_of<ObjectRef, TObjectRef>::value,
-                  "Can only call GetAttr with ObjectRef types.");
+      Optional<TObjectRef> default_value = Optional<TObjectRef>(std::nullopt)) const {
     auto it = attrs.find(attr_key);
     if (it != attrs.end()) {
-      // For backwards compatibility, return through TVMRetValue.
-      // This triggers any automatic conversions registered with
-      // PackedFuncValueConverter.  Importantly, this allows use of
-      // `GetAttr<Integer>` and `GetAttr<Bool>` for properties that
-      // are stored internally as `runtime::Box<int64_t>` and
-      // `runtime::Box<bool>`.
-      TVMRetValue ret;
-      ret = (*it).second;
-      return ret;
+      return Downcast<Optional<TObjectRef>>((*it).second);
     } else {
       return default_value;
     }
@@ -131,7 +127,7 @@ class TargetNode : public Object {
    * \tparam TObjectRef Type of the attribute
    * \param attr_key The name of the attribute key
    * \param default_value The value returned if the key is not present
-   * \return An optional, NullOpt if not found, otherwise the value found
+   * \return An optional, std::nullopt if not found, otherwise the value found
    */
   template <typename TObjectRef>
   Optional<TObjectRef> GetAttr(const std::string& attr_key, TObjectRef default_value) const {
@@ -158,14 +154,13 @@ class TargetNode : public Object {
    * \endcode
    */
   template <typename TObjectRef>
-  Optional<TObjectRef> GetFeature(
-      const std::string& feature_key,
-      Optional<TObjectRef> default_value = Optional<TObjectRef>(nullptr)) const {
-    Optional<TObjectRef> feature = Downcast<Optional<TObjectRef>>(features.Get(feature_key));
-    if (!feature) {
+  Optional<TObjectRef> GetFeature(const std::string& feature_key,
+                                  Optional<TObjectRef> default_value = std::nullopt) const {
+    if (auto feature = features.Get(feature_key)) {
+      return Downcast<TObjectRef>(feature.value());
+    } else {
       return default_value;
     }
-    return feature;
   }
   // variant that uses TObjectRef to enable implicit conversion to default value.
   template <typename TObjectRef>
@@ -178,12 +173,8 @@ class TargetNode : public Object {
   /*! \brief Get the keys for this target as an unordered_set of string */
   TVM_DLL std::unordered_set<std::string> GetLibs() const;
 
-  bool SEqualReduce(const TargetNode* other, SEqualReducer equal) const;
-  void SHashReduce(SHashReducer hash_reduce) const;
-
-  static constexpr const char* _type_key = "Target";
-  static constexpr const bool _type_has_method_sequal_reduce = true;
-  static constexpr const bool _type_has_method_shash_reduce = true;
+  static constexpr const char* _type_key = "target.Target";
+  static constexpr TVMFFISEqHashKind _type_s_eq_hash_kind = kTVMFFISEqHashKindTreeNode;
   TVM_DECLARE_FINAL_OBJECT_INFO(TargetNode, Object);
 
  private:
@@ -210,7 +201,7 @@ class Target : public ObjectRef {
    * \brief Construct a Target using a JSON-like configuration
    * \param config The JSON-like configuration for target
    */
-  TVM_DLL explicit Target(const Map<String, ObjectRef>& config);
+  TVM_DLL explicit Target(const Map<String, ffi::Any>& config);
   /*!
    * \brief Get the current target context from thread local storage.
    * \param allow_not_defined If the context stack is empty and this is set to true, an
@@ -238,33 +229,9 @@ class Target : public ObjectRef {
   /*! \return The target with the host stripped out */
   Target WithoutHost() const;
 
-  /*!
-   * \brief Returns true if \p this target represents an external codegen. If so,
-   * \p this->kind->name can be used as the "Compiler" attribute on partitioned functions,
-   * and can be used to retrieve a partitioning pattern table using
-   * \p get_pattern_table.
-   */
-  bool IsExternalCodegen() const;
-
-  /*!
-   * \brief Returns true if \p this target represents an external codegen which is compatible
-   * with \p that target. In particular:
-   *  - \p this has a true ::tvm::attr::kIsExternalCodegen attribute
-   *  - \p that does not have a true ::tvm::attr::kIsExternalCodegen attribute
-   *  - \p this and \p that have the same GetTargetDeviceType()
-   *
-   * After partitioning, the external codegen compilation path may use \p that to guide it's
-   * compilation to a \p runtime::Module. Given \p this, an appropriate \p that can be
-   * found using \p CompilationConfig::FindPrimitiveTargetOrFail(this->GetTargetDeviceType()).
-   *
-   * The \p CollagePartition pass uses this method to guide it's search over candidate partitions
-   * using external codegen.
-   */
-  bool IsExternalCodegenFor(const Target& that) const;
-
  private:
   Target(TargetKind kind, Optional<ObjectRef> host, String tag, Array<String> keys,
-         Map<String, ObjectRef> attrs);
+         Map<String, ffi::Any> attrs);
 
   // enable with syntax.
   friend class TargetInternal;

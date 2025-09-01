@@ -17,6 +17,7 @@
  * under the License.
  */
 
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/transform.h>
 
 #include "../../meta_schedule/utils.h"
@@ -28,29 +29,24 @@ namespace transform {
 tir::PrimFunc FewShotTunePrimFunc(const tir::PrimFunc& prim_func, const Target& target,
                                   int64_t valid_count, bool benchmark) {
   // fetch a local builder
-  static const auto* f_get_local_builder =
-      runtime::Registry::Get("meta_schedule.builder.get_local_builder");
-  ICHECK(f_get_local_builder)
-      << "ValueError: Cannot find the packed function \"meta_schedule.builder.get_local_builder\"";
-  meta_schedule::Builder builder = (*f_get_local_builder)();
+  static const auto f_get_local_builder =
+      tvm::ffi::Function::GetGlobalRequired("meta_schedule.builder.get_local_builder");
+  meta_schedule::Builder builder = f_get_local_builder().cast<meta_schedule::Builder>();
   ICHECK(builder.defined()) << "ValueError: The local builder is not defined!";
   // fetch a local runner
   meta_schedule::Runner runner{nullptr};
   if (benchmark) {
-    static const auto* f_get_local_runner =
-        runtime::Registry::Get("meta_schedule.runner.get_local_runner");
-    ICHECK(f_get_local_runner) << "ValueError: Cannot find the packed function "
-                                  "\"meta_schedule.builder.get_local_runner\"";
-    runner = (*f_get_local_runner)();
+    static const auto f_get_local_runner =
+        tvm::ffi::Function::GetGlobalRequired("meta_schedule.runner.get_local_runner");
+    runner = f_get_local_runner().cast<meta_schedule::Runner>();
     ICHECK(runner.defined()) << "ValueError: The local runner is not defined!";
   }
   // create an IRModule
   IRModule mod = IRModule(Map<GlobalVar, BaseFunc>(
       {{GlobalVar("main"), WithAttr(prim_func, tvm::attr::kGlobalSymbol, String("main"))}}));
   // fetch the number of physical cores
-  static const auto* f_cpu_count = runtime::Registry::Get("meta_schedule.cpu_count");
-  ICHECK(f_cpu_count) << "ValueError: Cannot find the packed function \"meta_schedule._cpu_count\"";
-  int num_threads = (*f_cpu_count)(false);
+  static const auto f_cpu_count = tvm::ffi::Function::GetGlobalRequired("meta_schedule.cpu_count");
+  int num_threads = f_cpu_count(false).cast<int>();
   // store the results
   Array<IRModule> results;
   std::vector<double> costs;
@@ -60,11 +56,11 @@ tir::PrimFunc FewShotTunePrimFunc(const tir::PrimFunc& prim_func, const Target& 
       /*target=*/target,
       /*space_generator=*/
       meta_schedule::SpaceGenerator::PostOrderApply(/*f_block_filter=*/nullptr,
-                                                    /*sch_rules=*/NullOpt,
-                                                    /*postprocs=*/NullOpt,
-                                                    /*mutator_probs=*/NullOpt),
+                                                    /*sch_rules=*/std::nullopt,
+                                                    /*postprocs=*/std::nullopt,
+                                                    /*mutator_probs=*/std::nullopt),
       /*search_strategy=*/meta_schedule::SearchStrategy::ReplayTrace(/*max_fail_count=*/100),
-      /*task_name=*/NullOpt,
+      /*task_name=*/std::nullopt,
       /*num_threads=*/num_threads,  // use all available local threads
       /*rand_state=*/-1,            // -1 means use random seed
       /*logger=*/nullptr);
@@ -72,8 +68,8 @@ tir::PrimFunc FewShotTunePrimFunc(const tir::PrimFunc& prim_func, const Target& 
   task->search_strategy.value()->PreTuning(
       /*max_trials=*/valid_count, /*num_trials_per_iter=*/valid_count,
       /*design_spaces=*/task->space_generator.value()->GenerateDesignSpace(mod),
-      /*database=*/NullOpt,
-      /*cost_model=*/NullOpt);
+      /*database=*/std::nullopt,
+      /*cost_model=*/std::nullopt);
   int fail_count = 0, max_fail_count = 100;
   while (valid_count > 0 && fail_count < max_fail_count) {
     Optional<Array<meta_schedule::MeasureCandidate>> candidates =
@@ -90,7 +86,7 @@ tir::PrimFunc FewShotTunePrimFunc(const tir::PrimFunc& prim_func, const Target& 
     int idx = 0;
     bool no_valid = true;  // whether there is no valid schedule in this iteration
     for (const meta_schedule::BuilderResult& builder_result : builder_results) {
-      if (!builder_result->error_msg.defined()) {
+      if (!builder_result->error_msg.has_value()) {
         results.push_back(candidates.value()[idx]->sch->mod());
         valid_count--;
         no_valid = false;
@@ -102,7 +98,7 @@ tir::PrimFunc FewShotTunePrimFunc(const tir::PrimFunc& prim_func, const Target& 
       Array<meta_schedule::RunnerInput> runner_inputs;
       int idx = 0;
       for (const meta_schedule::BuilderResult& builder_result : builder_results) {
-        if (!builder_result->error_msg.defined()) {
+        if (!builder_result->error_msg.has_value()) {
           runner_inputs.push_back(meta_schedule::RunnerInput(
               /*artifact_path=*/builder_result->artifact_path.value(),
               /*device_type=*/target->kind->name,
@@ -113,7 +109,7 @@ tir::PrimFunc FewShotTunePrimFunc(const tir::PrimFunc& prim_func, const Target& 
       Array<meta_schedule::RunnerFuture> runner_futures = runner->Run(runner_inputs);
       for (const meta_schedule::RunnerFuture& runner_future : runner_futures) {
         meta_schedule::RunnerResult runner_result = runner_future->Result();
-        if (runner_result->error_msg.defined()) {
+        if (runner_result->error_msg.has_value()) {
           costs.push_back(1e10);
         } else {
           double sum = 0;
@@ -148,7 +144,7 @@ tir::PrimFunc FewShotTunePrimFunc(const tir::PrimFunc& prim_func, const Target& 
 }
 
 Pass FewShotTuning(int valid_count, bool benchmark) {
-  runtime::TypedPackedFunc<IRModule(IRModule, PassContext)> pass_func =  //
+  auto pass_func =  //
       [=](IRModule m, PassContext pc) {
         // input check
         CHECK(valid_count > 0) << "Valid_count must be positive.";
@@ -167,11 +163,9 @@ Pass FewShotTuning(int valid_count, bool benchmark) {
             result.Set(gv, func);
           }
         }
-        return IRModule(result,               // functions
-                        m->type_definitions,  // type_definitions
-                        m->import_set_,       // import_set
-                        m->source_map,        // map
-                        m->attrs);            // attrs);
+        return IRModule(result,         // functions
+                        m->source_map,  // map
+                        m->attrs);      // attrs);
       };
   return CreateModulePass(/*pass_function=*/pass_func,    //
                           /*opt_level=*/0,                //
@@ -179,7 +173,10 @@ Pass FewShotTuning(int valid_count, bool benchmark) {
                           /*required=*/{});
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.FewShotTuning").set_body_typed(FewShotTuning);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.transform.FewShotTuning", FewShotTuning);
+});
 
 }  // namespace transform
 }  // namespace relax

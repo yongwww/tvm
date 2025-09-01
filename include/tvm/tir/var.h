@@ -61,25 +61,14 @@ class VarNode : public PrimExprNode {
    */
   Type type_annotation;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("dtype", &dtype);
-    v->Visit("name", &name_hint);
-    v->Visit("type_annotation", &type_annotation);
-    v->Visit("span", &span);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<VarNode>()
+        .def_ro("name", &VarNode::name_hint, refl::AttachFieldFlag::SEqHashIgnore())
+        .def_ro("type_annotation", &VarNode::type_annotation);
   }
 
-  bool SEqualReduce(const VarNode* other, SEqualReducer equal) const {
-    if (!equal(dtype, other->dtype)) return false;
-    if (!equal(type_annotation, other->type_annotation)) return false;
-    return equal.FreeVarEqualImpl(this, other);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(dtype);
-    hash_reduce(type_annotation);
-    hash_reduce.FreeVarHashImpl(this);
-  }
-
+  static constexpr TVMFFISEqHashKind _type_s_eq_hash_kind = kTVMFFISEqHashKindFreeVar;
   static constexpr const char* _type_key = "tir.Var";
   static constexpr const uint32_t _type_child_slots = 1;
   TVM_DECLARE_BASE_OBJECT_INFO(VarNode, PrimExprNode);
@@ -143,6 +132,10 @@ class Var : public PrimExpr {
  */
 class SizeVarNode : public VarNode {
  public:
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<SizeVarNode>();
+  }
   static constexpr const char* _type_key = "tir.SizeVar";
   TVM_DECLARE_FINAL_OBJECT_INFO(SizeVarNode, VarNode);
 };
@@ -258,7 +251,7 @@ enum IterVarType : int {
  *
  *  The dtype of the extent of the `dom` of the IterVar must match the dtype of the internal Var.
  */
-class IterVarNode : public Object {
+class IterVarNode : public PrimExprConvertibleNode {
  public:
   /*!
    * \brief the domain of iteration, if known, can be None
@@ -280,30 +273,20 @@ class IterVarNode : public Object {
    */
   mutable Span span;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("dom", &dom);
-    v->Visit("var", &var);
-    v->Visit("iter_type", &iter_type);
-    v->Visit("thread_tag", &thread_tag);
-    v->Visit("span", &span);
-  }
+  PrimExpr ToPrimExpr() const final { return var; }
 
-  bool SEqualReduce(const IterVarNode* other, SEqualReducer equal) const {
-    return equal(dom, other->dom) && equal.DefEqual(var, other->var) &&
-           equal(iter_type, other->iter_type) && equal(thread_tag, other->thread_tag);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(dom);
-    hash_reduce.DefHash(var);
-    hash_reduce(iter_type);
-    hash_reduce(thread_tag);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<IterVarNode>()
+        .def_ro("dom", &IterVarNode::dom)
+        .def_ro("var", &IterVarNode::var, refl::AttachFieldFlag::SEqHashDef())
+        .def_ro("iter_type", &IterVarNode::iter_type)
+        .def_ro("thread_tag", &IterVarNode::thread_tag);
   }
 
   static constexpr const char* _type_key = "tir.IterVar";
-  static constexpr const bool _type_has_method_sequal_reduce = true;
-  static constexpr const bool _type_has_method_shash_reduce = true;
-  TVM_DECLARE_FINAL_OBJECT_INFO(IterVarNode, Object);
+  static constexpr TVMFFISEqHashKind _type_s_eq_hash_kind = kTVMFFISEqHashKindTreeNode;
+  TVM_DECLARE_FINAL_OBJECT_INFO(IterVarNode, PrimExprConvertibleNode);
 };
 
 /*!
@@ -312,7 +295,7 @@ class IterVarNode : public Object {
  *
  *  The dtype of the extent of the `dom` of the IterVar must match the dtype of the internal Var.
  */
-class IterVar : public ObjectRef {
+class IterVar : public PrimExprConvertible {
  public:
   TVM_DLL IterVar(Range dom, Var var, IterVarType iter_type, String thread_tag = "",
                   Span span = Span());
@@ -321,7 +304,7 @@ class IterVar : public ObjectRef {
    */
   inline operator PrimExpr() const;
 
-  TVM_DEFINE_OBJECT_REF_METHODS(IterVar, ObjectRef, IterVarNode);
+  TVM_DEFINE_OBJECT_REF_METHODS(IterVar, PrimExprConvertible, IterVarNode);
   TVM_DEFINE_OBJECT_REF_COW_METHOD(IterVarNode);
 };
 

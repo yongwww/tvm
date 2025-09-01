@@ -25,6 +25,7 @@
 #define TVM_CONTRIB_MSC_CORE_IR_GRAPH_H_
 
 #include <dmlc/json.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/tir/data_layout.h>
 
 #include <string>
@@ -375,28 +376,18 @@ class MSCTensorNode : public Object {
   /*! \brief Get name of the dtype. */
   const String DTypeName() const;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("name", &name);
-    v->Visit("alias", &alias);
-    v->Visit("dtype", &dtype);
-    v->Visit("layout", &layout);
-    v->Visit("shape", &shape);
-    v->Visit("prims", &prims);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<MSCTensorNode>()
+        .def_ro("name", &MSCTensorNode::name)
+        .def_ro("alias", &MSCTensorNode::alias)
+        .def_ro("dtype", &MSCTensorNode::dtype)
+        .def_ro("layout", &MSCTensorNode::layout)
+        .def_ro("shape", &MSCTensorNode::shape)
+        .def_ro("prims", &MSCTensorNode::prims);
   }
 
-  bool SEqualReduce(const MSCTensorNode* other, SEqualReducer equal) const {
-    return equal(name, other->name) && equal(dtype, other->dtype) && equal(shape, other->shape) &&
-           equal(layout, other->layout) && equal(prims, other->prims);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(name);
-    hash_reduce(dtype);
-    hash_reduce(shape);
-    hash_reduce(layout);
-    hash_reduce(prims);
-  }
-
+  static constexpr TVMFFISEqHashKind _type_s_eq_hash_kind = kTVMFFISEqHashKindTreeNode;
   static constexpr const char* _type_key = "msc.core.MSCTensor";
   TVM_DECLARE_FINAL_OBJECT_INFO(MSCTensorNode, Object);
 };
@@ -486,32 +477,19 @@ class BaseJointNode : public Object {
     return val;
   }
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("index", &index);
-    v->Visit("name", &name);
-    v->Visit("shared_ref", &shared_ref);
-    v->Visit("attrs", &attrs);
-    v->Visit("parents", &parents);
-    v->Visit("children", &children);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<BaseJointNode>()
+        .def_ro("index", &BaseJointNode::index)
+        .def_ro("name", &BaseJointNode::name)
+        .def_ro("shared_ref", &BaseJointNode::shared_ref)
+        .def_ro("attrs", &BaseJointNode::attrs)
+        .def_ro("parents", &BaseJointNode::parents)
+        .def_ro("children", &BaseJointNode::children);
   }
 
-  bool SEqualReduce(const BaseJointNode* other, SEqualReducer equal) const {
-    return equal(name, other->name) && equal(shared_ref, other->shared_ref) &&
-           equal(attrs, other->attrs) && equal(parents, other->parents) &&
-           equal(children, other->children);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(name);
-    hash_reduce(shared_ref);
-    hash_reduce(attrs);
-    hash_reduce(parents);
-    hash_reduce(children);
-  }
-
+  static constexpr TVMFFISEqHashKind _type_s_eq_hash_kind = kTVMFFISEqHashKindTreeNode;
   static constexpr const char* _type_key = "msc.core.BaseJoint";
-  static constexpr const bool _type_has_method_sequal_reduce = true;
-  static constexpr const bool _type_has_method_shash_reduce = true;
   static constexpr const uint32_t _type_child_slots = 2;
   TVM_DECLARE_BASE_OBJECT_INFO(BaseJointNode, Object);
 };
@@ -570,30 +548,17 @@ class MSCJointNode : public BaseJointNode {
   const std::pair<MSCJoint, size_t> ProducerAndIdxOf(const String& name) const;
   const std::pair<MSCJoint, size_t> ProducerAndIdxOf(const MSCTensor& input) const;
 
-  void VisitAttrs(AttrVisitor* v) {
-    BaseJointNode::VisitAttrs(v);
-    v->Visit("optype", &optype);
-    v->Visit("scope", &scope);
-    v->Visit("inputs", &inputs);
-    v->Visit("outputs", &outputs);
-    v->Visit("weights", &weights);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<MSCJointNode>()
+        .def_ro("optype", &MSCJointNode::optype)
+        .def_ro("scope", &MSCJointNode::scope)
+        .def_ro("inputs", &MSCJointNode::inputs)
+        .def_ro("outputs", &MSCJointNode::outputs)
+        .def_ro("weights", &MSCJointNode::weights);
   }
 
-  bool SEqualReduce(const MSCJointNode* other, SEqualReducer equal) const {
-    return BaseJointNode::SEqualReduce(other, equal) && equal(optype, other->optype) &&
-           equal(scope, other->scope) && equal(inputs, other->inputs) &&
-           equal(outputs, other->outputs) && equal(weights, other->weights);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    BaseJointNode::SHashReduce(hash_reduce);
-    hash_reduce(optype);
-    hash_reduce(scope);
-    hash_reduce(inputs);
-    hash_reduce(outputs);
-    hash_reduce(weights);
-  }
-
+  static constexpr TVMFFISEqHashKind _type_s_eq_hash_kind = kTVMFFISEqHashKindTreeNode;
   static constexpr const char* _type_key = "msc.core.MSCJoint";
   TVM_DECLARE_FINAL_OBJECT_INFO(MSCJointNode, BaseJointNode);
 };
@@ -658,18 +623,9 @@ class MSCPrimNode : public BaseJointNode {
   /*! \brief Get child from the prim. */
   const MSCPrim ChildAt(int index) const;
 
-  void VisitAttrs(AttrVisitor* v) {
-    BaseJointNode::VisitAttrs(v);
-    v->Visit("optype", &optype);
-  }
-
-  bool SEqualReduce(const MSCPrimNode* other, SEqualReducer equal) const {
-    return BaseJointNode::SEqualReduce(other, equal) && equal(optype, other->optype);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    BaseJointNode::SHashReduce(hash_reduce);
-    hash_reduce(optype);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<MSCPrimNode>().def_ro("optype", &MSCPrimNode::optype);
   }
 
   static constexpr const char* _type_key = "msc.core.MSCPrim";
@@ -732,23 +688,12 @@ class WeightJointNode : public BaseJointNode {
   /*! \brief Get child from the node. */
   const WeightJoint ChildAt(int index) const;
 
-  void VisitAttrs(AttrVisitor* v) {
-    BaseJointNode::VisitAttrs(v);
-    v->Visit("weight_type", &weight_type);
-    v->Visit("weight", &weight);
-    v->Visit("friends", &friends);
-  }
-
-  bool SEqualReduce(const WeightJointNode* other, SEqualReducer equal) const {
-    return BaseJointNode::SEqualReduce(other, equal) && equal(weight_type, other->weight_type) &&
-           equal(weight, other->weight) && equal(friends, other->friends);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    BaseJointNode::SHashReduce(hash_reduce);
-    hash_reduce(weight_type);
-    hash_reduce(weight);
-    hash_reduce(friends);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<WeightJointNode>()
+        .def_ro("weight_type", &WeightJointNode::weight_type)
+        .def_ro("weight", &WeightJointNode::weight)
+        .def_ro("friends", &WeightJointNode::friends);
   }
 
   static constexpr const char* _type_key = "msc.core.WeightJoint";
@@ -807,26 +752,17 @@ class BaseGraphNode : public Object {
   /*! \brief Check if node in the graph. */
   const bool HasNode(const String& name) const;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("name", &name);
-    v->Visit("nodes", &nodes);
-    v->Visit("node_names", &node_names);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<BaseGraphNode>()
+        .def_ro("name", &BaseGraphNode::name)
+        .def_ro("nodes", &BaseGraphNode::nodes)
+        .def_ro("node_names", &BaseGraphNode::node_names);
   }
 
-  bool SEqualReduce(const BaseGraphNode* other, SEqualReducer equal) const {
-    return equal(name, other->name) && equal(nodes, other->nodes) &&
-           equal(node_names, other->node_names);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(name);
-    hash_reduce(nodes);
-    hash_reduce(node_names);
-  }
-
+  static constexpr TVMFFISEqHashKind _type_s_eq_hash_kind = kTVMFFISEqHashKindTreeNode;
   static constexpr const char* _type_key = "msc.core.BaseGraph";
-  static constexpr const bool _type_has_method_sequal_reduce = true;
-  static constexpr const bool _type_has_method_shash_reduce = true;
+
   static constexpr const uint32_t _type_child_slots = 2;
   TVM_DECLARE_BASE_OBJECT_INFO(BaseGraphNode, Object);
 };
@@ -906,28 +842,14 @@ class MSCGraphNode : public BaseGraphNode {
   /*! \brief Analysis the graph and fill info. */
   void AnalysisGraph();
 
-  void VisitAttrs(AttrVisitor* v) {
-    BaseGraphNode::VisitAttrs(v);
-    v->Visit("prims", &prims);
-    v->Visit("prim_names", &prim_names);
-    v->Visit("input_names", &input_names);
-    v->Visit("output_names", &output_names);
-    v->Visit("weight_holders", &weight_holders);
-  }
-
-  bool SEqualReduce(const MSCGraphNode* other, SEqualReducer equal) const {
-    return BaseGraphNode::SEqualReduce(other, equal) && equal(prims, other->prims) &&
-           equal(prim_names, other->prim_names) && equal(input_names, other->input_names) &&
-           equal(output_names, other->output_names) && equal(weight_holders, other->weight_holders);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    BaseGraphNode::SHashReduce(hash_reduce);
-    hash_reduce(prims);
-    hash_reduce(prim_names);
-    hash_reduce(input_names);
-    hash_reduce(output_names);
-    hash_reduce(weight_holders);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<MSCGraphNode>()
+        .def_ro("prims", &MSCGraphNode::prims)
+        .def_ro("prim_names", &MSCGraphNode::prim_names)
+        .def_ro("input_names", &MSCGraphNode::input_names)
+        .def_ro("output_names", &MSCGraphNode::output_names)
+        .def_ro("weight_holders", &MSCGraphNode::weight_holders);
   }
 
   static constexpr const char* _type_key = "msc.core.MSCGraph";
@@ -986,13 +908,10 @@ class WeightGraphNode : public BaseGraphNode {
   /*! \brief Export graph to prototxt. */
   const String ToPrototxt() const;
 
-  void VisitAttrs(AttrVisitor* v) { BaseGraphNode::VisitAttrs(v); }
-
-  bool SEqualReduce(const WeightGraphNode* other, SEqualReducer equal) const {
-    return BaseGraphNode::SEqualReduce(other, equal);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<WeightGraphNode>();
   }
-
-  void SHashReduce(SHashReducer hash_reduce) const { BaseGraphNode::SHashReduce(hash_reduce); }
 
   static constexpr const char* _type_key = "msc.core.WeightGraph";
   TVM_DECLARE_FINAL_OBJECT_INFO(WeightGraphNode, BaseGraphNode);

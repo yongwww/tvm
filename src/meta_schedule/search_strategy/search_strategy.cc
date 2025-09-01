@@ -16,6 +16,8 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+#include <tvm/ffi/reflection/registry.h>
+
 #include "../utils.h"
 
 namespace tvm {
@@ -82,28 +84,29 @@ SearchStrategy SearchStrategy::PySearchStrategy(
   return SearchStrategy(n);
 }
 
-TVM_REGISTER_NODE_TYPE(MeasureCandidateNode);
-TVM_REGISTER_OBJECT_TYPE(SearchStrategyNode);
-TVM_REGISTER_NODE_TYPE(PySearchStrategyNode);
+TVM_FFI_STATIC_INIT_BLOCK({
+  MeasureCandidateNode::RegisterReflection();
+  PySearchStrategyNode::RegisterReflection();
+});
 
-TVM_REGISTER_GLOBAL("meta_schedule.MeasureCandidate")
-    .set_body_typed([](tir::Schedule sch, Array<ArgInfo> args_info) -> MeasureCandidate {
-      return MeasureCandidate(sch, args_info);
-    });
-TVM_REGISTER_GLOBAL("meta_schedule.SearchStrategyPySearchStrategy")
-    .set_body_typed(SearchStrategy::PySearchStrategy);
-TVM_REGISTER_GLOBAL("meta_schedule.SearchStrategyInitializeWithTuneContext")
-    .set_body_method<SearchStrategy>(&SearchStrategyNode::InitializeWithTuneContext);
-TVM_REGISTER_GLOBAL("meta_schedule.SearchStrategyPreTuning")
-    .set_body_method<SearchStrategy>(&SearchStrategyNode::PreTuning);
-TVM_REGISTER_GLOBAL("meta_schedule.SearchStrategyPostTuning")
-    .set_body_method<SearchStrategy>(&SearchStrategyNode::PostTuning);
-TVM_REGISTER_GLOBAL("meta_schedule.SearchStrategyGenerateMeasureCandidates")
-    .set_body_method<SearchStrategy>(&SearchStrategyNode::GenerateMeasureCandidates);
-TVM_REGISTER_GLOBAL("meta_schedule.SearchStrategyNotifyRunnerResults")
-    .set_body_method<SearchStrategy>(&SearchStrategyNode::NotifyRunnerResults);
-TVM_REGISTER_GLOBAL("meta_schedule.SearchStrategyClone")
-    .set_body_method<SearchStrategy>(&SearchStrategyNode::Clone);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef()
+      .def("meta_schedule.MeasureCandidate",
+           [](tir::Schedule sch, Optional<Array<ArgInfo>> args_info) -> MeasureCandidate {
+             return MeasureCandidate(sch, args_info.value_or({}));
+           })
+      .def("meta_schedule.SearchStrategyPySearchStrategy", SearchStrategy::PySearchStrategy)
+      .def_method("meta_schedule.SearchStrategyInitializeWithTuneContext",
+                  &SearchStrategyNode::InitializeWithTuneContext)
+      .def_method("meta_schedule.SearchStrategyPreTuning", &SearchStrategyNode::PreTuning)
+      .def_method("meta_schedule.SearchStrategyPostTuning", &SearchStrategyNode::PostTuning)
+      .def_method("meta_schedule.SearchStrategyGenerateMeasureCandidates",
+                  &SearchStrategyNode::GenerateMeasureCandidates)
+      .def_method("meta_schedule.SearchStrategyNotifyRunnerResults",
+                  &SearchStrategyNode::NotifyRunnerResults)
+      .def_method("meta_schedule.SearchStrategyClone", &SearchStrategyNode::Clone);
+});
 
 }  // namespace meta_schedule
 }  // namespace tvm

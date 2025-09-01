@@ -25,6 +25,7 @@
 #include "./script_complete.h"
 
 #include <tvm/arith/int_set.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/tir/analysis.h>
 
 #include <utility>
@@ -95,7 +96,7 @@ class ScriptCompleter : public StmtMutator {
       n->annotations.erase(attr::script_parsing_detect_access);
       return Block(n);
     } else {
-      return std::move(block);
+      return block;
     }
   }
 
@@ -143,7 +144,7 @@ PrimFunc ScriptComplete(PrimFunc func, const Array<Buffer>& root_allocates) {
   }();
 
   if (should_insert_root) {
-    Block root_block({}, {}, {}, "root", std::move(res), NullOpt, root_allocates);
+    Block root_block({}, {}, {}, "root", std::move(res), std::nullopt, root_allocates);
     res = BlockRealize({}, Bool(true), std::move(root_block));
   }
 
@@ -160,7 +161,10 @@ PrimFunc ScriptComplete(PrimFunc func, const Array<Buffer>& root_allocates) {
   }
 }
 
-TVM_REGISTER_GLOBAL("script.Complete").set_body_typed(ScriptComplete);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("script.Complete", ScriptComplete);
+});
 
 }  // namespace tir
 }  // namespace tvm

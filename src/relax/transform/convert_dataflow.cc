@@ -23,6 +23,7 @@
  *   dataflow into dataflow blocks.
  */
 
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/expr.h>
 #include <tvm/relax/expr_functor.h>
 #include <tvm/relax/transform.h>
@@ -91,7 +92,7 @@ class DataflowBlockExtractor : public ExprMutator {
       }
 
       dataflow_bindings = {};
-      input_dataflow_block = NullOpt;
+      input_dataflow_block = std::nullopt;
     };
 
     for (auto block : seq->blocks) {
@@ -149,10 +150,9 @@ Expr ConvertToDataflow(const Expr& input, size_t min_size) {
 namespace transform {
 
 Pass ConvertToDataflow(int min_size) {
-  runtime::TypedPackedFunc<Function(Function, IRModule, PassContext)> pass_func =
-      [=](Function f, IRModule m, PassContext pc) {
-        return Downcast<Function>(ConvertToDataflow(f, min_size));
-      };
+  auto pass_func = [=](Function f, IRModule m, PassContext pc) {
+    return Downcast<Function>(ConvertToDataflow(f, min_size));
+  };
   auto pass = CreateFunctionPass(pass_func, 0, "ConvertToDataflow", {});
   // Canonicalize bindings is included afterwards in order to transform any
   // normal vars in DF blocks that are not used outside the DF block into
@@ -160,7 +160,10 @@ Pass ConvertToDataflow(int min_size) {
   return tvm::transform::Sequential({pass, CanonicalizeBindings()});
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.ConvertToDataflow").set_body_typed(ConvertToDataflow);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.transform.ConvertToDataflow", ConvertToDataflow);
+});
 
 }  // namespace transform
 

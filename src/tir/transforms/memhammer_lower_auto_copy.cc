@@ -18,7 +18,8 @@
  */
 
 #include <tvm/arith/iter_affine_map.h>
-#include <tvm/runtime/registry.h>
+#include <tvm/ffi/function.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/target/target.h>
 #include <tvm/tir/expr.h>
 #include <tvm/tir/op.h>
@@ -198,7 +199,7 @@ class AutoPadder {
         if (buffer_map_.count(op->buffer)) {
           op->buffer = buffer_map_[op->buffer];
         }
-        return std::move(load);
+        return load;
       }
 
       Stmt VisitStmt_(const BufferStoreNode* _op) final {
@@ -207,7 +208,7 @@ class AutoPadder {
         if (buffer_map_.count(op->buffer)) {
           op->buffer = buffer_map_[op->buffer];
         }
-        return std::move(store);
+        return store;
       }
 
       Stmt VisitStmt_(const BlockNode* op) final {
@@ -662,10 +663,10 @@ class AutoCopyMutator : public StmtExprMutator {
   Stmt VisitStmt_(const BlockNode* op) final {
     Block block = Downcast<Block>(StmtMutator::VisitStmt_(op));
     // only rewrite the block annotated with "auto_copy"
-    if (GetAnn<Integer>(op, tir::attr::auto_copy).value_or(0)->value == 0) {
+    if (!GetAnn<bool>(op, tir::attr::auto_copy).value_or(false)) {
       BlockNode* n = block.CopyOnWrite();
       n->alloc_buffers = padder.PadSharedMemory(std::move(n->alloc_buffers));
-      return std::move(block);
+      return block;
     }
     ICHECK_EQ(block->writes.size(), 1);
     ICHECK_GE(block->reads.size(), 1);
@@ -703,7 +704,7 @@ class AutoCopyMutator : public StmtExprMutator {
     }
     padder.AnalyzeSharedMemoryAccess(block->body, outer_loops_, data_bits, thread_extent_);
     n->alloc_buffers = padder.PadSharedMemory(std::move(n->alloc_buffers));
-    return std::move(block);
+    return block;
   }
 
   Stmt VisitStmt_(const ForNode* op) final {
@@ -776,7 +777,10 @@ Pass LowerAutoCopy() {
   return CreatePrimFuncPass(pass_func, 0, "tir.LowerAutoCopy", {});
 }
 
-TVM_REGISTER_GLOBAL("tir.transform.LowerAutoCopy").set_body_typed(LowerAutoCopy);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("tir.transform.LowerAutoCopy", LowerAutoCopy);
+});
 
 }  // namespace transform
 }  // namespace tir

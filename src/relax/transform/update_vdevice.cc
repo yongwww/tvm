@@ -23,6 +23,7 @@
  * \brief Update Virtual Device pass.
  */
 
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/expr.h>
 #include <tvm/relax/expr_functor.h>
 #include <tvm/relax/transform.h>
@@ -98,8 +99,7 @@ class VDeviceMutator : public ExprMutator {
 namespace transform {
 
 Pass UpdateVDevice(VDevice new_vdevice, int64_t index) {
-  runtime::TypedPackedFunc<IRModule(IRModule, PassContext)> pass_func = [=](IRModule m,
-                                                                            PassContext pc) {
+  auto pass_func = [=](IRModule m, PassContext pc) {
     return relax::VDeviceMutator(m, new_vdevice, index).Run();
   };
   return CreateModulePass(/*pass_function=*/pass_func,
@@ -107,7 +107,10 @@ Pass UpdateVDevice(VDevice new_vdevice, int64_t index) {
                           /*pass_name=*/"UpdateVDevice",
                           /*required=*/{});
 }
-TVM_REGISTER_GLOBAL("relax.transform.UpdateVDevice").set_body_typed(UpdateVDevice);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.transform.UpdateVDevice", UpdateVDevice);
+});
 
 }  // namespace transform
 }  // namespace relax

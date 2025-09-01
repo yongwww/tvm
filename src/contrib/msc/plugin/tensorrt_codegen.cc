@@ -22,6 +22,8 @@
  */
 #include "tensorrt_codegen.h"
 
+#include <tvm/ffi/reflection/registry.h>
+
 #include <set>
 namespace tvm {
 namespace contrib {
@@ -769,8 +771,8 @@ void TensorRTPluginCodeGen::CodegenCreator(const Plugin& plugin, bool dynamic, b
       stack_.call_arg(DocUtils::ToAttrAccess("meta_attr", a->name));
     }
     stack_.call_arg("layouts")
-        .func_call("setPluginNamespace", NullOpt, DocUtils::ToPtr("plugin"))
-        .inplace_start("c_str", NullOpt, DocUtils::ToDoc("name_space_"))
+        .func_call("setPluginNamespace", std::nullopt, DocUtils::ToPtr("plugin"))
+        .inplace_start("c_str", std::nullopt, DocUtils::ToDoc("name_space_"))
         .inplace_end()
         .func_end("plugin");
     // deserializePlugin
@@ -784,8 +786,8 @@ void TensorRTPluginCodeGen::CodegenCreator(const Plugin& plugin, bool dynamic, b
         .call_arg("name")
         .call_arg("data")
         .call_arg("length")
-        .func_call("setPluginNamespace", NullOpt, DocUtils::ToPtr("plugin"))
-        .inplace_start("c_str", NullOpt, DocUtils::ToDoc("name_space_"))
+        .func_call("setPluginNamespace", std::nullopt, DocUtils::ToPtr("plugin"))
+        .inplace_start("c_str", std::nullopt, DocUtils::ToDoc("name_space_"))
         .inplace_end()
         .func_end("plugin");
   }
@@ -883,18 +885,21 @@ void TensorRTPluginCodeGen::CodegenEnqueue(const Plugin& plugin, bool dynamic) {
   }
 }
 
-TVM_REGISTER_GLOBAL("msc.plugin.GetTensorRTPluginSources")
-    .set_body_typed([](const String& codegen_config, const String& print_config,
-                       const String& codegen_type) -> Map<String, String> {
-      TensorRTPluginCodeGen codegen = TensorRTPluginCodeGen(codegen_config);
-      if (codegen_type == "build") {
-        return codegen.GetBuildSources(print_config);
-      }
-      if (codegen_type == "manager") {
-        return codegen.GetManagerSources(print_config);
-      }
-      return Map<String, String>();
-    });
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("msc.plugin.GetTensorRTPluginSources",
+                        [](const String& codegen_config, const String& print_config,
+                           const String& codegen_type) -> Map<String, String> {
+                          TensorRTPluginCodeGen codegen = TensorRTPluginCodeGen(codegen_config);
+                          if (codegen_type == "build") {
+                            return codegen.GetBuildSources(print_config);
+                          }
+                          if (codegen_type == "manager") {
+                            return codegen.GetManagerSources(print_config);
+                          }
+                          return Map<String, String>();
+                        });
+});
 
 }  // namespace msc
 }  // namespace contrib

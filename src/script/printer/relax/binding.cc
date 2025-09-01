@@ -22,7 +22,7 @@ namespace tvm {
 namespace script {
 namespace printer {
 
-IfDoc PrintIfExpr(const relax::If& n, const ObjectPath& n_p, const IRDocsifier& d,  //
+IfDoc PrintIfExpr(const relax::If& n, const AccessPath& n_p, const IRDocsifier& d,  //
                   const Optional<ExprDoc>& var, const Optional<ExprDoc>& ann) {
   using relax::SeqExpr;
   ExprDoc cond = d->AsDoc<ExprDoc>(n->cond, n_p->Attr("cond"));
@@ -41,10 +41,10 @@ IfDoc PrintIfExpr(const relax::If& n, const ObjectPath& n_p, const IRDocsifier& 
 
 TVM_STATIC_IR_FUNCTOR(IRDocsifier, vtable)
     .set_dispatch<relax::MatchCast>(
-        "", [](relax::MatchCast n, ObjectPath n_p, IRDocsifier d) -> Doc {
+        "", [](relax::MatchCast n, AccessPath n_p, IRDocsifier d) -> Doc {
           using relax::StructInfo;
           using relax::MatchStructInfo;
-          Optional<ExprDoc> ann = NullOpt;
+          Optional<ExprDoc> ann = std::nullopt;
           if (d->cfg->show_all_struct_info) {
             ann = StructInfoAsAnn(n->var, n_p->Attr("var"), d, n->value);
           }
@@ -57,7 +57,7 @@ TVM_STATIC_IR_FUNCTOR(IRDocsifier, vtable)
 
 TVM_STATIC_IR_FUNCTOR(IRDocsifier, vtable)
     .set_dispatch<relax::VarBinding>(  //
-        "", [](relax::VarBinding n, ObjectPath n_p, IRDocsifier d) -> Doc {
+        "", [](relax::VarBinding n, AccessPath n_p, IRDocsifier d) -> Doc {
           if (const auto if_ = n->value.as<relax::IfNode>()) {
             Optional<ExprDoc> ann = StructInfoAsAnn(n->var, n_p->Attr("var"), d, n->value);
             ExprDoc lhs = DefineVar(n->var, d->frames.back(), d);
@@ -82,8 +82,8 @@ TVM_STATIC_IR_FUNCTOR(IRDocsifier, vtable)
         });
 
 TVM_STATIC_IR_FUNCTOR(IRDocsifier, vtable)
-    .set_dispatch<relax::If>("", [](relax::If n, ObjectPath n_p, IRDocsifier d) -> Doc {
-      return PrintIfExpr(n, n_p, d, NullOpt, NullOpt);
+    .set_dispatch<relax::If>("", [](relax::If n, AccessPath n_p, IRDocsifier d) -> Doc {
+      return PrintIfExpr(n, n_p, d, std::nullopt, std::nullopt);
     });
 
 TVM_SCRIPT_REPR(relax::MatchCastNode, ReprPrintRelax);

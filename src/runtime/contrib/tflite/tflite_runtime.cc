@@ -25,7 +25,8 @@
 #include <tensorflow/lite/interpreter.h>
 #include <tensorflow/lite/kernels/register.h>
 #include <tensorflow/lite/model.h>
-#include <tvm/runtime/registry.h>
+#include <tvm/ffi/function.h>
+#include <tvm/ffi/reflection/registry.h>
 
 namespace tvm {
 namespace runtime {
@@ -86,6 +87,7 @@ DataType TfLiteDType2TVMDType(TfLiteType dtype) {
       return DataType::Float(16);
     default:
       LOG(FATAL) << "tflite data type not support yet: " << dtype;
+      TVM_FFI_UNREACHABLE();
   }
 }
 
@@ -150,40 +152,47 @@ NDArray TFLiteRuntime::GetOutput(int index) const {
   return ret;
 }
 
-PackedFunc TFLiteRuntime::GetFunction(const String& name, const ObjectPtr<Object>& sptr_to_self) {
+ffi::Optional<ffi::Function> TFLiteRuntime::GetFunction(const String& name) {
+  ObjectPtr<Object> sptr_to_self = ffi::GetObjectPtr<Object>(this);
   // Return member functions during query.
   if (name == "set_input") {
-    return PackedFunc([sptr_to_self, this](TVMArgs args, TVMRetValue* rv) {
-      int in_idx = args[0];
+    return ffi::Function([sptr_to_self, this](ffi::PackedArgs args, ffi::Any* rv) {
+      int in_idx = args[0].cast<int>();
       ICHECK_GE(in_idx, 0);
-      this->SetInput(in_idx, args[1]);
+      this->SetInput(in_idx, args[1].cast<DLTensor*>());
     });
   } else if (name == "get_output") {
-    return PackedFunc(
-        [sptr_to_self, this](TVMArgs args, TVMRetValue* rv) { *rv = this->GetOutput(args[0]); });
+    return ffi::Function([sptr_to_self, this](ffi::PackedArgs args, ffi::Any* rv) {
+      *rv = this->GetOutput(args[0].cast<int>());
+    });
   } else if (name == "invoke") {
-    return PackedFunc([sptr_to_self, this](TVMArgs args, TVMRetValue* rv) { this->Invoke(); });
+    return ffi::Function(
+        [sptr_to_self, this](ffi::PackedArgs args, ffi::Any* rv) { this->Invoke(); });
   } else if (name == "set_num_threads") {
-    return PackedFunc([sptr_to_self, this](TVMArgs args, TVMRetValue* rv) {
-      int num_threads = args[0];
+    return ffi::Function([sptr_to_self, this](ffi::PackedArgs args, ffi::Any* rv) {
+      int num_threads = args[0].cast<int>();
       CHECK_GE(num_threads, 1);
       this->SetNumThreads(num_threads);
     });
   } else {
-    return PackedFunc();
+    return std::nullopt;
   }
 }
 
-Module TFLiteRuntimeCreate(const std::string& tflite_model_bytes, Device dev) {
+ffi::Module TFLiteRuntimeCreate(const std::string& tflite_model_bytes, Device dev) {
   auto exec = make_object<TFLiteRuntime>();
   exec->Init(tflite_model_bytes, dev);
-  return Module(exec);
+  return ffi::Module(exec);
 }
 
-TVM_REGISTER_GLOBAL("tvm.tflite_runtime.create").set_body([](TVMArgs args, TVMRetValue* rv) {
-  *rv = TFLiteRuntimeCreate(args[0], args[1]);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef()
+      .def_packed("tvm.tflite_runtime.create",
+                  [](ffi::PackedArgs args, ffi::Any* rv) {
+                    *rv = TFLiteRuntimeCreate(args[0].cast<std::string>(), args[1].cast<Device>());
+                  })
+      .def("target.runtime.tflite", TFLiteRuntimeCreate);
 });
-
-TVM_REGISTER_GLOBAL("target.runtime.tflite").set_body_typed(TFLiteRuntimeCreate);
 }  // namespace runtime
 }  // namespace tvm

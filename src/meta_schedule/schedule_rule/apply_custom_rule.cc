@@ -16,6 +16,8 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+#include <tvm/ffi/reflection/registry.h>
+
 #include "../utils.h"
 
 namespace tvm {
@@ -41,15 +43,16 @@ class ApplyCustomRuleNode : public ScheduleRuleNode {
     if (Optional<String> ann = tir::GetAnn<String>(sch->GetSRef(block_rv), "schedule_rule")) {
       if (ann.value() != "None") {
         for (const String& key : keys) {
-          if (const runtime::PackedFunc* custom_schedule_fn =
-                  runtime::Registry::Get(GetCustomRuleName(ann.value(), key))) {
-            Array<tir::Schedule> result = ((*custom_schedule_fn)(sch, block_rv));
+          if (const auto custom_schedule_fn =
+                  tvm::ffi::Function::GetGlobal(GetCustomRuleName(ann.value(), key))) {
+            Array<tir::Schedule> result =
+                (*custom_schedule_fn)(sch, block_rv).cast<Array<tir::Schedule>>();
             return result;
           }
         }
         std::ostringstream os;
         os << "Unknown schedule rule \"" << ann.value() << "\" for target keys \"" << keys
-           << "\". Checked PackedFuncs:";
+           << "\". Checked ffi::Functions:";
         for (const String& key : keys) {
           os << "\n  " << GetCustomRuleName(ann.value(), key);
         }
@@ -68,9 +71,12 @@ class ApplyCustomRuleNode : public ScheduleRuleNode {
   }
 
  public:
-  Optional<Target> target_ = NullOpt;
+  Optional<Target> target_ = std::nullopt;
 
-  void VisitAttrs(tvm::AttrVisitor* v) { v->Visit("target_", &target_); }
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<ApplyCustomRuleNode>().def_ro("target_", &ApplyCustomRuleNode::target_);
+  }
 
   static constexpr const char* _type_key = "meta_schedule.ApplyCustomRule";
   TVM_DECLARE_FINAL_OBJECT_INFO(ApplyCustomRuleNode, ScheduleRuleNode);
@@ -85,9 +91,12 @@ bool ScheduleRule::IsApplyCustomRule(const ScheduleRule& rule) {
   return rule->IsInstance<ApplyCustomRuleNode>();
 }
 
-TVM_REGISTER_NODE_TYPE(ApplyCustomRuleNode);
-TVM_REGISTER_GLOBAL("meta_schedule.ScheduleRuleApplyCustomRule")
-    .set_body_typed(ScheduleRule::ApplyCustomRule);
+TVM_FFI_STATIC_INIT_BLOCK({ ApplyCustomRuleNode::RegisterReflection(); });
+
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("meta_schedule.ScheduleRuleApplyCustomRule", ScheduleRule::ApplyCustomRule);
+});
 
 }  // namespace meta_schedule
 }  // namespace tvm

@@ -24,10 +24,11 @@
 #ifndef TVM_TIR_BUFFER_H_
 #define TVM_TIR_BUFFER_H_
 
+#include <tvm/ffi/container/array.h>
+#include <tvm/ffi/reflection/registry.h>
+#include <tvm/ffi/string.h>
 #include <tvm/ir/expr.h>
 #include <tvm/node/script_printer.h>
-#include <tvm/runtime/container/array.h>
-#include <tvm/runtime/container/string.h>
 #include <tvm/tir/var.h>
 
 #include <string>
@@ -111,39 +112,21 @@ class BufferNode : public Object {
   /*! \brief constructor */
   BufferNode() {}
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("data", &data);
-    v->Visit("dtype", &dtype);
-    v->Visit("shape", &shape);
-    v->Visit("strides", &strides);
-    v->Visit("axis_separators", &axis_separators);
-    v->Visit("elem_offset", &elem_offset);
-    v->Visit("name", &name);
-    v->Visit("data_alignment", &data_alignment);
-    v->Visit("offset_factor", &offset_factor);
-    v->Visit("buffer_type", &buffer_type);
-    v->Visit("span", &span);
-  }
-
-  bool SEqualReduce(const BufferNode* other, SEqualReducer equal) const {
-    // Use DefEqual as buffer can define variables in its semantics,
-    // skip name as name is not important.
-    return equal.DefEqual(data, other->data) && equal(dtype, other->dtype) &&
-           equal.DefEqual(shape, other->shape) && equal.DefEqual(strides, other->strides) &&
-           equal.DefEqual(axis_separators, other->axis_separators) &&
-           equal.DefEqual(elem_offset, other->elem_offset) &&
-           equal(data_alignment, other->data_alignment) && equal(buffer_type, other->buffer_type);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce.DefHash(data);
-    hash_reduce(dtype);
-    hash_reduce.DefHash(shape);
-    hash_reduce.DefHash(strides);
-    hash_reduce.DefHash(elem_offset);
-    hash_reduce.DefHash(axis_separators);
-    hash_reduce(data_alignment);
-    hash_reduce(buffer_type);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<BufferNode>()
+        .def_ro("data", &BufferNode::data, refl::AttachFieldFlag::SEqHashDef())
+        .def_ro("dtype", &BufferNode::dtype)
+        .def_ro("shape", &BufferNode::shape, refl::AttachFieldFlag::SEqHashDef())
+        .def_ro("strides", &BufferNode::strides, refl::AttachFieldFlag::SEqHashDef())
+        .def_ro("axis_separators", &BufferNode::axis_separators,
+                refl::AttachFieldFlag::SEqHashDef())
+        .def_ro("elem_offset", &BufferNode::elem_offset, refl::AttachFieldFlag::SEqHashDef())
+        .def_ro("name", &BufferNode::name, refl::AttachFieldFlag::SEqHashIgnore())
+        .def_ro("data_alignment", &BufferNode::data_alignment)
+        .def_ro("offset_factor", &BufferNode::offset_factor)
+        .def_ro("buffer_type", &BufferNode::buffer_type)
+        .def_ro("span", &BufferNode::span, refl::AttachFieldFlag::SEqHashIgnore());
   }
 
   /*! \return preferred index type for this buffer node */
@@ -160,8 +143,8 @@ class BufferNode : public Object {
   Array<PrimExpr> ElemOffset(Array<PrimExpr> index) const;
 
   static constexpr const char* _type_key = "tir.Buffer";
-  static constexpr const bool _type_has_method_sequal_reduce = true;
-  static constexpr const bool _type_has_method_shash_reduce = true;
+  static constexpr TVMFFISEqHashKind _type_s_eq_hash_kind = kTVMFFISEqHashKindTreeNode;
+
   TVM_DECLARE_FINAL_OBJECT_INFO(BufferNode, Object);
   TVM_OBJECT_ENABLE_SCRIPT_PRINTER();
 };
@@ -204,7 +187,7 @@ class Buffer : public ObjectRef {
    */
   TVM_DLL PrimExpr access_ptr(int access_mask, DataType ptr_type = DataType::Handle(),
                               int content_lanes = 1, PrimExpr offset = IntImm(DataType::Int(32), 0),
-                              Optional<PrimExpr> input_extent = NullOpt) const;
+                              Optional<PrimExpr> input_extent = std::nullopt) const;
   /*!
    * \brief Create an Expr that does a vector load at begin index.
    * \param begin The beginning index
@@ -213,7 +196,7 @@ class Buffer : public ObjectRef {
    * loaded. The number lanes of the mask must be equal to the number of lanes in being loaded.
    */
   TVM_DLL PrimExpr vload(Array<PrimExpr> begin, DataType dtype,
-                         Optional<PrimExpr> predicate = NullOpt) const;
+                         Optional<PrimExpr> predicate = std::nullopt) const;
   /*!
    * \brief Create a Stmt that does a vector store at begin index.
    * \param begin The beginning index
@@ -222,7 +205,7 @@ class Buffer : public ObjectRef {
    * stored. The number lanes of the mask must be equal to the number of lanes in value.
    */
   TVM_DLL Stmt vstore(Array<PrimExpr> begin, PrimExpr value,
-                      Optional<PrimExpr> predicate = NullOpt) const;
+                      Optional<PrimExpr> predicate = std::nullopt) const;
 
   /*!
    * \brief Get a flattened version of the buffer
@@ -259,7 +242,8 @@ class Buffer : public ObjectRef {
  */
 TVM_DLL Buffer decl_buffer(Array<PrimExpr> shape, DataType dtype = DataType::Float(32),
                            String name = "buffer", String storage_scope = "",
-                           Array<IntImm> axis_separators = {}, Span span = Span());
+                           Optional<Array<IntImm>> axis_separators = std::nullopt,
+                           Span span = Span());
 
 /*!
  * \brief Base node for data producers.
@@ -273,7 +257,7 @@ TVM_DLL Buffer decl_buffer(Array<PrimExpr> shape, DataType dtype = DataType::Flo
  *
  * \sa tvm::te::Tensor
  */
-class DataProducerNode : public Object {
+class DataProducerNode : public PrimExprConvertibleNode {
  public:
   /*! \brief destructor. */
   virtual ~DataProducerNode() {}
@@ -293,26 +277,17 @@ class DataProducerNode : public Object {
    */
   virtual String GetNameHint() const = 0;
 
-  bool SEqualReduce(const DataProducerNode* other, SEqualReducer equal) const {
-    // because buffer producer is opaque, we just do pointer equality.
-    return this == other;
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {}
-
   static constexpr const char* _type_key = "tir.DataProducer";
-  static constexpr const bool _type_has_method_sequal_reduce = true;
-  static constexpr const bool _type_has_method_shash_reduce = true;
-  TVM_DECLARE_BASE_OBJECT_INFO(DataProducerNode, Object);
+  TVM_DECLARE_BASE_OBJECT_INFO(DataProducerNode, PrimExprConvertibleNode);
 };
 
 /*!
  * \brief Managed reference to DataProducerNode.
  * \sa DataProducerNode
  */
-class DataProducer : public ObjectRef {
+class DataProducer : public PrimExprConvertible {
  public:
-  TVM_DEFINE_OBJECT_REF_METHODS(DataProducer, ObjectRef, DataProducerNode);
+  TVM_DEFINE_OBJECT_REF_METHODS(DataProducer, PrimExprConvertible, DataProducerNode);
 };
 
 /*!

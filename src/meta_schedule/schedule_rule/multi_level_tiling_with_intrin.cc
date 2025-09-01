@@ -17,6 +17,8 @@
  * under the License.
  */
 
+#include <tvm/ffi/reflection/registry.h>
+
 #include "../../tir/schedule/analysis.h"
 #include "../../tir/schedule/transform.h"
 #include "../utils.h"
@@ -33,7 +35,7 @@ Optional<tir::BlockRV> TileForIntrin(tir::Schedule sch, tir::BlockRV block,
                                      const std::string& intrin_name) {
   Optional<tir::LoopRV> tiled_loop_rv = TileWithTensorIntrin(sch, block, intrin_name);
   if (!tiled_loop_rv) {
-    return NullOpt;
+    return std::nullopt;
   }
   ICHECK(tiled_loop_rv.defined());
   tir::BlockRV outer_block = sch->Blockize(tiled_loop_rv.value());
@@ -91,10 +93,12 @@ class MultiLevelTilingWithIntrinNode : public MultiLevelTilingNode {
   TVM_DECLARE_FINAL_OBJECT_INFO(MultiLevelTilingWithIntrinNode, MultiLevelTilingNode);
 };
 
-ScheduleRule ScheduleRule::MultiLevelTilingWithIntrin(
-    String intrin_name, String structure, Optional<Array<String>> tile_binds,
-    Optional<Integer> max_innermost_factor, Optional<Array<Integer>> vector_load_lens,
-    Optional<Map<String, ObjectRef>> reuse_read, Optional<Map<String, ObjectRef>> reuse_write) {
+ScheduleRule ScheduleRule::MultiLevelTilingWithIntrin(String intrin_name, String structure,
+                                                      Optional<Array<String>> tile_binds,
+                                                      Optional<Integer> max_innermost_factor,
+                                                      Optional<Array<Integer>> vector_load_lens,
+                                                      Optional<Map<String, ffi::Any>> reuse_read,
+                                                      Optional<Map<String, ffi::Any>> reuse_write) {
   ICHECK(tir::TensorIntrin::Get(intrin_name).defined())
       << "Provided tensor intrinsic " << intrin_name << " is not registered.";
   auto node = MultiLevelTilingInitCommon<MultiLevelTilingWithIntrinNode>(
@@ -103,9 +107,11 @@ ScheduleRule ScheduleRule::MultiLevelTilingWithIntrin(
   return ScheduleRule(node);
 }
 
-TVM_REGISTER_NODE_TYPE(MultiLevelTilingWithIntrinNode);
-TVM_REGISTER_GLOBAL("meta_schedule.ScheduleRuleMultiLevelTilingWithIntrin")
-    .set_body_typed(ScheduleRule::MultiLevelTilingWithIntrin);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("meta_schedule.ScheduleRuleMultiLevelTilingWithIntrin",
+                        ScheduleRule::MultiLevelTilingWithIntrin);
+});
 
 }  // namespace meta_schedule
 }  // namespace tvm

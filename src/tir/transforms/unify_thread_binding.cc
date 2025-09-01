@@ -22,6 +22,7 @@
  */
 
 #include <tvm/arith/analyzer.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/tir/analysis.h>
 #include <tvm/tir/stmt_functor.h>
 #include <tvm/tir/transform.h>
@@ -59,7 +60,7 @@ class ThreadBindingUnifier : public StmtExprMutator {
     if (op->kind != ForKind::kThreadBinding) {
       return StmtExprMutator::VisitStmt_(op);
     }
-    Map<String, ObjectRef> annotations = op->annotations;
+    Map<String, Any> annotations = op->annotations;
     Stmt stmt = UnifyThreadBindingImpl(op, op->loop_var, op->thread_binding.value(),
                                        Range::FromMinExtent(op->min, op->extent));
     if (annotations.empty()) {
@@ -68,7 +69,8 @@ class ThreadBindingUnifier : public StmtExprMutator {
     if (const auto* loop = stmt.as<ForNode>()) {
       For new_loop = GetRef<For>(loop);
       new_loop.CopyOnWrite()->annotations = std::move(annotations);
-      return std::move(new_loop);
+      return new_loop;
+
     } else {
       // Create a new unit loop with the annotation.
       DataType dtype = op->loop_var->dtype;
@@ -76,7 +78,7 @@ class ThreadBindingUnifier : public StmtExprMutator {
                  /*min=*/IntImm(dtype, 0),         //
                  /*extent=*/IntImm(dtype, 1),      //
                  /*kind=*/ForKind::kSerial, stmt,  //
-                 /*thread_binding=*/NullOpt,       //
+                 /*thread_binding=*/std::nullopt,  //
                  /*annotation=*/std::move(annotations));
     }
   }
@@ -185,14 +187,9 @@ class ThreadBindingUnifier : public StmtExprMutator {
 };
 
 PrimFunc UnifyThreadBinding(PrimFunc f) {
-  // Only apply this pass to TIR that is not from TE schedules
-  if (!IsFromLegacyTESchedule(f)) {
-    PrimFuncNode* fptr = f.CopyOnWrite();
-    fptr->body = ThreadBindingUnifier::Unify(std::move(f->body));
-    return f;
-  } else {
-    return f;
-  }
+  PrimFuncNode* fptr = f.CopyOnWrite();
+  fptr->body = ThreadBindingUnifier::Unify(std::move(f->body));
+  return f;
 }
 
 namespace transform {
@@ -204,7 +201,10 @@ Pass UnifyThreadBinding() {
   return CreatePrimFuncPass(pass_func, 0, "tir.UnifyThreadBinding", {});
 }
 
-TVM_REGISTER_GLOBAL("tir.transform.UnifyThreadBinding").set_body_typed(UnifyThreadBinding);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("tir.transform.UnifyThreadBinding", UnifyThreadBinding);
+});
 
 }  // namespace transform
 

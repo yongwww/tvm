@@ -20,7 +20,8 @@
 /*!
  * \file coreml_runtime.cc
  */
-#include <tvm/runtime/registry.h>
+#include <tvm/ffi/function.h>
+#include <tvm/ffi/reflection/registry.h>
 
 #include "coreml_runtime.h"
 
@@ -128,22 +129,24 @@ void CoreMLRuntime::Init(const std::string& symbol, const std::string& _model_pa
   model_ = std::unique_ptr<CoreMLModel>(new CoreMLModel(url));
 }
 
-PackedFunc CoreMLRuntime::GetFunction(const String& name, const ObjectPtr<Object>& sptr_to_self) {
+Optional<ffi::Function> CoreMLRuntime::GetFunction(const String& name) {
   // Return member functions during query.
   if (name == "invoke" || name == "run") {
-    return PackedFunc([this](TVMArgs args, TVMRetValue* rv) { model_->Invoke(); });
+    return ffi::Function([this](ffi::PackedArgs args, ffi::Any* rv) { model_->Invoke(); });
   } else if (name == "set_input") {
-    return PackedFunc([this](TVMArgs args, TVMRetValue* rv) {
+    return ffi::Function([this](ffi::PackedArgs args, ffi::Any* rv) {
       const auto& input_name = args[0].operator std::string();
       model_->SetInput(input_name, args[1]);
     });
   } else if (name == "get_output") {
-    return PackedFunc([this](TVMArgs args, TVMRetValue* rv) { *rv = model_->GetOutput(args[0]); });
+    return ffi::Function(
+        [this](ffi::PackedArgs args, ffi::Any* rv) { *rv = model_->GetOutput(args[0]); });
   } else if (name == "get_num_outputs") {
-    return PackedFunc([this](TVMArgs args, TVMRetValue* rv) { *rv = model_->GetNumOutputs(); });
+    return ffi::Function(
+        [this](ffi::PackedArgs args, ffi::Any* rv) { *rv = model_->GetNumOutputs(); });
   } else if (name == symbol_) {
     // Return the packedfunc which executes the subgraph.
-    return PackedFunc([this](TVMArgs args, TVMRetValue* rv) {
+    return ffi::Function([this](ffi::PackedArgs args, ffi::Any* rv) {
       MLModelDescription* model_desc = [model_->model_ modelDescription];
       NSString* metadata = [model_desc metadata][MLModelDescriptionKey];
       NSData* data = [metadata dataUsingEncoding:NSUTF8StringEncoding];
@@ -179,21 +182,27 @@ PackedFunc CoreMLRuntime::GetFunction(const String& name, const ObjectPtr<Object
       *rv = out;
     });
   } else {
-    return PackedFunc();
+    return std::nullopt;
   }
 }
 
-Module CoreMLRuntimeCreate(const std::string& symbol, const std::string& model_path) {
+ffi::Module CoreMLRuntimeCreate(const std::string& symbol, const std::string& model_path) {
   auto exec = make_object<CoreMLRuntime>();
   exec->Init(symbol, model_path);
-  return Module(exec);
+  return ffi::Module(exec);
 }
 
-TVM_REGISTER_GLOBAL("tvm.coreml_runtime.create").set_body([](TVMArgs args, TVMRetValue* rv) {
-  *rv = CoreMLRuntimeCreate(args[0], args[1]);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def_packed("tvm.coreml_runtime.create", [](ffi::PackedArgs args, ffi::Any* rv) {
+    *rv = CoreMLRuntimeCreate(args[0], args[1]);
+  });
 });
 
-void CoreMLRuntime::SaveToBinary(dmlc::Stream* stream) {
+ffi::Bytes CoreMLRuntime::SaveToBytes() const {
+  std::string buffer;
+  dmlc::MemoryStringStream ms(&buffer);
+  dmlc::Stream* stream = &ms;
   NSURL* url = model_->url_;
   NSFileWrapper* dirWrapper = [[[NSFileWrapper alloc] initWithURL:url options:0
                                                             error:nil] autorelease];
@@ -202,6 +211,7 @@ void CoreMLRuntime::SaveToBinary(dmlc::Stream* stream) {
   stream->Write((uint64_t)[dirData length]);
   stream->Write([dirData bytes], [dirData length]);
   DLOG(INFO) << "Save " << symbol_ << " (" << [dirData length] << " bytes)";
+  return ffi::Bytes(buffer);
 }
 
 /*!
@@ -211,8 +221,9 @@ void CoreMLRuntime::SaveToBinary(dmlc::Stream* stream) {
  *
  * \return The created CoreML module.
  */
-Module CoreMLRuntimeLoadFromBinary(void* strm) {
-  dmlc::Stream* stream = static_cast<dmlc::Stream*>(strm);
+ffi::Module CoreMLRuntimeLoadFromBytes(const ffi::Bytes& bytes) {
+  dmlc::MemoryFixedSizeStream ms(const_cast<char*>(bytes.data()), bytes.size());
+  dmlc::Stream* stream = &ms;
 
   NSString* tempBaseDir = NSTemporaryDirectory();
   if (tempBaseDir == nil) tempBaseDir = @"/tmp";
@@ -242,10 +253,13 @@ Module CoreMLRuntimeLoadFromBinary(void* strm) {
 
   auto exec = make_object<CoreMLRuntime>();
   exec->Init(symbol, [model_path UTF8String]);
-  return Module(exec);
+  return ffi::Module(exec);
 }
 
-TVM_REGISTER_GLOBAL("runtime.module.loadbinary_coreml").set_body_typed(CoreMLRuntimeLoadFromBinary);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("ffi.Module.load_from_bytes.coreml", CoreMLRuntimeLoadFromBytes);
+});
 
 }  // namespace runtime
 }  // namespace tvm

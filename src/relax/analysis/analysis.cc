@@ -24,6 +24,7 @@
  * \brief Analysis functions for Relax.
  */
 
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/analysis.h>
 #include <tvm/relax/expr_functor.h>
 #include <tvm/tir/expr_functor.h>
@@ -178,7 +179,7 @@ Optional<Expr> FindImpureCall(const Expr& expr, const Optional<Expr>& own_name) 
 
    private:
     const Optional<Expr>& own_name_;
-    Optional<Expr> impure_expr_ = NullOpt;
+    Optional<Expr> impure_expr_ = std::nullopt;
   };
 
   if (own_name) {
@@ -197,15 +198,15 @@ bool ContainsImpureCall(const Expr& expr, const Optional<Expr>& own_name) {
   return FindImpureCall(expr, own_name).defined();
 }
 
-TVM_REGISTER_GLOBAL("relax.analysis.free_vars").set_body_typed(FreeVars);
-
-TVM_REGISTER_GLOBAL("relax.analysis.bound_vars").set_body_typed(BoundVars);
-
-TVM_REGISTER_GLOBAL("relax.analysis.all_vars").set_body_typed(AllVars);
-
-TVM_REGISTER_GLOBAL("relax.analysis.all_global_vars").set_body_typed(AllGlobalVars);
-
-TVM_REGISTER_GLOBAL("relax.analysis.contains_impure_call").set_body_typed(ContainsImpureCall);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef()
+      .def("relax.analysis.free_vars", FreeVars)
+      .def("relax.analysis.bound_vars", BoundVars)
+      .def("relax.analysis.all_vars", AllVars)
+      .def("relax.analysis.all_global_vars", AllGlobalVars)
+      .def("relax.analysis.contains_impure_call", ContainsImpureCall);
+});
 
 }  // namespace relax
 }  // namespace tvm

@@ -18,6 +18,7 @@
  */
 #include "./multi_level_tiling.h"
 
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/meta_schedule/schedule_rule.h>
 
 #include <algorithm>
@@ -54,7 +55,7 @@ using tir::IterVarType;
 using tir::LoopRV;
 using tir::Schedule;
 
-TVM_REGISTER_OBJECT_TYPE(StateNode);
+TVM_FFI_STATIC_INIT_BLOCK({ MultiLevelTilingNode::RegisterReflection(); });
 
 State::State(tir::Schedule sch, tir::BlockRV block_rv, Array<Array<tir::LoopRV>> tiles) {
   ObjectPtr<StateNode> node = make_object<StateNode>();
@@ -102,7 +103,7 @@ void MultiLevelTilingNode::InitializeWithTuneContext(const TuneContext& context)
 
 // Entry of the mega rule; Inherited from ScheduleRuleNode
 Array<Schedule> MultiLevelTilingNode::Apply(const Schedule& sch, const BlockRV& block_rv) {
-  if ((filter_fn_ && filter_fn_.value()(sch, sch->GetSRef(block_rv))) ||
+  if ((filter_fn_ && filter_fn_.value()(sch, sch->GetSRef(block_rv)).cast<bool>()) ||
       NeedsMultiLevelTiling(sch->state(), sch->GetSRef(block_rv))) {
     sch->Annotate(block_rv, tir::attr::meta_schedule_tiling_structure, structure);
 
@@ -383,8 +384,9 @@ void MultiLevelTilingNode::AnnotateCooperativeFetching(Schedule* sch,
   if (!valid_vector_lens.empty()) {
     int n = valid_vector_lens.size();
     double prob = 1.0 / n;
-    tir::ExprRV vector_load_len = (*sch)->SampleCategorical(
-        support::AsArray<int, runtime::Int>(valid_vector_lens), Array<runtime::Float>(n, prob));
+    tir::ExprRV vector_load_len =
+        (*sch)->SampleCategorical(support::AsArray<int, Integer>(valid_vector_lens),
+                                  Array<FloatImm>(n, FloatImm(DataType::Float(32), prob)));
     (*sch)->Annotate(block, tir::attr::meta_schedule_cooperative_fetch, vector_load_len);
   }
 }
@@ -394,18 +396,20 @@ void MultiLevelTilingNode::AnnotateCooperativeFetching(Schedule* sch,
 ScheduleRule ScheduleRule::MultiLevelTiling(String structure, Optional<Array<String>> tile_binds,
                                             Optional<Integer> max_innermost_factor,
                                             Optional<Array<Integer>> vector_load_lens,
-                                            Optional<Map<String, ObjectRef>> reuse_read,
-                                            Optional<Map<String, ObjectRef>> reuse_write,
-                                            Optional<runtime::PackedFunc> filter_fn) {
+                                            Optional<Map<String, ffi::Any>> reuse_read,
+                                            Optional<Map<String, ffi::Any>> reuse_write,
+                                            Optional<ffi::Function> filter_fn) {
   auto node = MultiLevelTilingInitCommon<MultiLevelTilingNode>(
       structure, tile_binds, max_innermost_factor, vector_load_lens, reuse_read, reuse_write);
   node->filter_fn_ = filter_fn;
   return ScheduleRule(node);
 }
 
-TVM_REGISTER_NODE_TYPE(MultiLevelTilingNode);
-TVM_REGISTER_GLOBAL("meta_schedule.ScheduleRuleMultiLevelTiling")
-    .set_body_typed(ScheduleRule::MultiLevelTiling);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("meta_schedule.ScheduleRuleMultiLevelTiling",
+                        ScheduleRule::MultiLevelTiling);
+});
 
 }  // namespace meta_schedule
 }  // namespace tvm

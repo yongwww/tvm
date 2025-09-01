@@ -22,6 +22,7 @@
  * \brief Reorder concat(permute_dims(A), permute_dims(B)) into permute_dims(concat(A,B))
  */
 
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/analysis.h>
 #include <tvm/relax/dataflow_matcher.h>
 #include <tvm/relax/expr.h>
@@ -40,7 +41,7 @@ namespace tvm {
 namespace relax {
 
 namespace {
-std::tuple<DFPattern, TypedPackedFunc<Expr(Expr, Map<DFPattern, Expr>)>> CreatePatterns() {
+std::tuple<DFPattern, ffi::TypedFunction<Expr(Expr, Map<DFPattern, Expr>)>> CreatePatterns() {
   // TODO(Lunderberg): Allow pattern-matching to handle a flexible
   // number of arguments, each of which matches the same type of
   // pattern.
@@ -150,16 +151,10 @@ std::tuple<DFPattern, TypedPackedFunc<Expr(Expr, Map<DFPattern, Expr>)>> CreateP
     auto concat_attrs = concat_call->attrs.as<ConcatAttrs>();
     ICHECK(concat_attrs);
 
-    auto old_concat_axis = [&]() -> size_t {
-      if (concat_attrs->axis.defined()) {
-        return concat_attrs->axis.value()->value;
-      } else {
-        return 0;
-      }
-    }();
+    auto old_concat_axis = [&]() -> size_t { return concat_attrs->axis.value_or(0); }();
     Integer new_concat_axis = get_permute_dims_axes(all_permute_dims[0])[old_concat_axis];
 
-    auto new_concat = concat(Tuple(args), new_concat_axis);
+    auto new_concat = concat(Tuple(args), new_concat_axis->value);
     auto new_permute_dims = permute_dims(new_concat, permute_axes);
 
     return new_permute_dims;
@@ -179,8 +174,11 @@ Pass ReorderPermuteDimsAfterConcat() {
   return CreateFunctionPass(pass_func, 1, "ReorderPermuteDimsAfterConcat", {});
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.ReorderPermuteDimsAfterConcat")
-    .set_body_typed(ReorderPermuteDimsAfterConcat);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.transform.ReorderPermuteDimsAfterConcat",
+                        ReorderPermuteDimsAfterConcat);
+});
 
 }  // namespace transform
 }  // namespace relax

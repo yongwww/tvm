@@ -66,6 +66,7 @@
  * during memory planning.
  */
 #include <tvm/arith/analyzer.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/analysis.h>
 #include <tvm/relax/expr_functor.h>
 #include <tvm/relax/nested_msg.h>
@@ -166,7 +167,7 @@ class TokenAllocator1D {
    * \brief Request a storage token from the available token pool for a
    * given prototype, or report no appropriate available token in the pool.
    * \param prototype The requesting prototype storage token.
-   * \return The request result token. Return NullOpt if there is no
+   * \return The request result token. Return std::nullopt if there is no
    * appropriate available token in the pool.
    */
   Optional<StorageToken> RequestReuse(StorageToken prototype) {
@@ -175,7 +176,7 @@ class TokenAllocator1D {
     // If the prototype has no reference at all, feel free to allocate new storage.
     // The unused binding can be removed by cleaning passes.
     if (prototype->ref_counter == 0) {
-      return NullOpt;
+      return std::nullopt;
     }
 
     // Step 1. Get the available pool of the token dtype.
@@ -197,7 +198,7 @@ class TokenAllocator1D {
           return available_token;
         }
       }
-      return NullOpt;
+      return std::nullopt;
     }
     // Step 2. Get the range of memory blocks in [size / match_range_, size * match_range_)
     auto begin = pool.lower_bound(size / match_range_);
@@ -228,8 +229,9 @@ class TokenAllocator1D {
       pool.erase(mid);
       return available_token;
     }
-    // Return `NullOpt` indicating that no satisfiable storage token is found in the available pool.
-    return NullOpt;
+    // Return `std::nullopt` indicating that no satisfiable storage token is found in the available
+    // pool.
+    return std::nullopt;
   }
 
   /*!
@@ -375,33 +377,18 @@ void SetTIRVarUpperBound(Function func, arith::Analyzer* ana,
   // memory planning.
   // NOTE: we only apply the annotated upper bounds to the TIR variables that
   // appear in the **function signature**.
-  Map<ObjectRef, ObjectRef> var_upper_bound_attr_raw =
-      func->GetAttr<Map<ObjectRef, ObjectRef>>("tir_var_upper_bound")
-          .value_or(Map<ObjectRef, ObjectRef>());
-  Array<ObjectRef> non_negative_var_attr_raw =
-      func->GetAttr<Array<ObjectRef>>("tir_non_negative_var").value_or(Array<ObjectRef>());
+  Map<String, IntImm> var_upper_bound_attr_raw =
+      func->GetAttr<Map<String, IntImm>>("tir_var_upper_bound").value_or(Map<String, IntImm>());
+  Array<String> non_negative_var_attr_raw =
+      func->GetAttr<Array<String>>("tir_non_negative_var").value_or(Array<String>());
   std::unordered_map<String, IntImm> var_upper_bound_attr;
   std::unordered_set<String> non_negative_var_attr;
   // We manually check the value type to ensure the values are all positive IntImm.
-  for (auto it : var_upper_bound_attr_raw) {
-    const auto* key = it.first.as<StringObj>();
-    const auto* value = it.second.as<IntImmNode>();
-    CHECK(key != nullptr)
-        << "The entry key of attr `tir_var_upper_bound` should be string. However "
-        << it.first->GetTypeKey() << " is got.";
-    CHECK(value != nullptr)
-        << "The entry value of attr `tir_var_upper_bound` should be integer. However "
-        << it.second->GetTypeKey() << " is got.";
-    CHECK_GT(value->value, 0)
-        << "The entry value of attr `tir_var_upper_bound` should be a positive integer, while "
-        << value->value << " is got.";
-    var_upper_bound_attr[GetRef<String>(key)] = GetRef<IntImm>(value);
+  for (auto [key, value] : var_upper_bound_attr_raw) {
+    var_upper_bound_attr[key] = value;
   }
-  for (ObjectRef var_name : non_negative_var_attr_raw) {
-    const auto* key = var_name.as<StringObj>();
-    CHECK(key != nullptr) << "The element of attr `tir_non_negative_var` should be string. However "
-                          << key->GetTypeKey() << " is got.";
-    non_negative_var_attr.insert(GetRef<String>(key));
+  for (const String& var_name : non_negative_var_attr_raw) {
+    non_negative_var_attr.insert(var_name);
   }
   Array<tir::Var> var_in_signature = TIRVarsInStructInfo(GetStructInfo(func));
   for (const tir::Var& tir_var : var_in_signature) {
@@ -977,12 +964,16 @@ IRModule StaticPlanBlockMemory(IRModule mod) {
 namespace transform {
 
 Pass StaticPlanBlockMemory() {
-  runtime::TypedPackedFunc<IRModule(IRModule, PassContext)> pass_func =
-      [=](IRModule m, PassContext pc) { return relax::StaticPlanBlockMemory(std::move(m)); };
+  auto pass_func = [=](IRModule m, PassContext pc) {
+    return relax::StaticPlanBlockMemory(std::move(m));
+  };
   return CreateModulePass(pass_func, /*opt_level=*/0, "StaticPlanBlockMemory", {});
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.StaticPlanBlockMemory").set_body_typed(StaticPlanBlockMemory);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.transform.StaticPlanBlockMemory", StaticPlanBlockMemory);
+});
 
 }  // namespace transform
 }  // namespace relax

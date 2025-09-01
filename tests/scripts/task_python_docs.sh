@@ -46,7 +46,9 @@ clean_files() {
 sphinx_precheck() {
     clean_files
     echo "PreCheck sphinx doc generation WARNINGS.."
-    make cython3
+
+    # setup tvm-ffi into python folder
+    python3 -m pip install  -v --target=python ./ffi
 
     pushd docs
     make clean
@@ -123,7 +125,10 @@ clean_files
 # cleanup stale log files
 find . -type f -path "*.log" | xargs rm -f
 find . -type f -path "*.pyc" | xargs rm -f
-make cython3
+
+# setup tvm-ffi into python folder
+python3 -m pip install  -v --target=python ./ffi
+
 
 cd docs
 PYTHONPATH=$(pwd)/../python make htmldepoly SPHINXOPTS='-j auto' |& tee /tmp/$$.log.txt
@@ -156,12 +161,6 @@ npm install
 npm run typedoc
 cd ..
 
-# Rust doc
-cd rust
-# Temp disable rust doc build
-# cargo doc --workspace --no-deps
-cd ..
-
 # Prepare the doc dir
 rm -rf _docs
 mv docs/_build/html _docs
@@ -169,7 +168,6 @@ rm -f _docs/.buildinfo
 mkdir -p _docs/reference/api
 mv docs/doxygen/html _docs/reference/api/doxygen
 mv jvm/core/target/site/apidocs _docs/reference/api/javadoc
-# mv rust/target/doc _docs/api/rust
 mv web/dist/docs _docs/reference/api/typedoc
 git rev-parse HEAD > _docs/commit_hash
 

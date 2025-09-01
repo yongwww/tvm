@@ -24,13 +24,20 @@
 
 #include "sorting.h"
 
+#include <tvm/ffi/reflection/registry.h>
+
 #include <vector>
 
 namespace tvm {
 namespace relax {
 
+TVM_FFI_STATIC_INIT_BLOCK({
+  SortAttrs::RegisterReflection();
+  ArgsortAttrs::RegisterReflection();
+  TopKAttrs::RegisterReflection();
+});
+
 /* relax.sort */
-TVM_REGISTER_NODE_TYPE(SortAttrs);
 
 Expr sort(Expr data, int axis, bool descending) {
   auto attrs = make_object<SortAttrs>();
@@ -41,7 +48,10 @@ Expr sort(Expr data, int axis, bool descending) {
   return Call(op, {std::move(data)}, Attrs{attrs}, {});
 }
 
-TVM_REGISTER_GLOBAL("relax.op.sort").set_body_typed(sort);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.op.sort", sort);
+});
 
 StructInfo InferStructInfoSort(const Call& call, const BlockBuilder& ctx) {
   return GetUnaryInputTensorStructInfo(call, ctx);
@@ -55,7 +65,6 @@ TVM_REGISTER_OP("relax.sort")
     .set_attr<Bool>("FPurity", Bool(true));
 
 /* relax.argsort */
-TVM_REGISTER_NODE_TYPE(ArgsortAttrs);
 
 Expr argsort(Expr data, int axis, bool descending, DataType dtype) {
   auto attrs = make_object<ArgsortAttrs>();
@@ -67,7 +76,10 @@ Expr argsort(Expr data, int axis, bool descending, DataType dtype) {
   return Call(op, {std::move(data)}, Attrs{attrs}, {});
 }
 
-TVM_REGISTER_GLOBAL("relax.op.argsort").set_body_typed(argsort);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.op.argsort", argsort);
+});
 
 StructInfo InferStructInfoArgsort(const Call& call, const BlockBuilder& ctx) {
   TensorStructInfo data_sinfo = GetUnaryInputTensorStructInfo(call, ctx);
@@ -87,7 +99,6 @@ TVM_REGISTER_OP("relax.argsort")
     .set_attr<Bool>("FPurity", Bool(true));
 
 /* relax.topk */
-TVM_REGISTER_NODE_TYPE(TopKAttrs);
 
 Expr topk(Expr data, int k, int axis, String ret_type, bool largest, DataType dtype) {
   auto attrs = make_object<TopKAttrs>();
@@ -101,7 +112,10 @@ Expr topk(Expr data, int k, int axis, String ret_type, bool largest, DataType dt
   return Call(op, {std::move(data)}, Attrs{attrs}, {});
 }
 
-TVM_REGISTER_GLOBAL("relax.op.topk").set_body_typed(topk);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.op.topk", topk);
+});
 
 StructInfo InferStructInfoTopK(const Call& call, const BlockBuilder& ctx) {
   TensorStructInfo data_sinfo = GetUnaryInputTensorStructInfo(call, ctx);
@@ -142,6 +156,7 @@ StructInfo InferStructInfoTopK(const Call& call, const BlockBuilder& ctx) {
     return output_sinfos[1];
   }
   LOG(FATAL) << "Unsupported ret type: " << ret_type;
+  TVM_FFI_UNREACHABLE();
 }
 
 TVM_REGISTER_OP("relax.topk")

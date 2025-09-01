@@ -25,6 +25,7 @@
 #define TVM_CONTRIB_MSC_CORE_IR_PLUGIN_H_
 
 #include <dmlc/json.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/tir/data_layout.h>
 
 #include <string>
@@ -268,25 +269,16 @@ class PluginAttrNode : public Object {
   /*! \brief Load attribute from json string. */
   void FromJson(const std::string& json_str);
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("name", &name);
-    v->Visit("type", &type);
-    v->Visit("default_value", &default_value);
-    v->Visit("describe", &describe);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<PluginAttrNode>()
+        .def_ro("name", &PluginAttrNode::name)
+        .def_ro("type", &PluginAttrNode::type)
+        .def_ro("default_value", &PluginAttrNode::default_value)
+        .def_ro("describe", &PluginAttrNode::describe);
   }
 
-  bool SEqualReduce(const PluginAttrNode* other, SEqualReducer equal) const {
-    return equal(name, other->name) && equal(type, other->type) &&
-           equal(default_value, other->default_value) && equal(describe, other->describe);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(name);
-    hash_reduce(type);
-    hash_reduce(default_value);
-    hash_reduce(describe);
-  }
-
+  static constexpr TVMFFISEqHashKind _type_s_eq_hash_kind = kTVMFFISEqHashKindTreeNode;
   static constexpr const char* _type_key = "msc.core.PluginAttr";
   TVM_DECLARE_FINAL_OBJECT_INFO(PluginAttrNode, Object);
 };
@@ -345,27 +337,17 @@ class PluginTensorNode : public Object {
   /*! \brief Load tensor from json string. */
   void FromJson(const std::string& json_str);
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("name", &name);
-    v->Visit("dtype", &dtype);
-    v->Visit("ndim", &ndim);
-    v->Visit("device", &device);
-    v->Visit("describe", &describe);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<PluginTensorNode>()
+        .def_ro("name", &PluginTensorNode::name)
+        .def_ro("dtype", &PluginTensorNode::dtype)
+        .def_ro("ndim", &PluginTensorNode::ndim)
+        .def_ro("device", &PluginTensorNode::device)
+        .def_ro("describe", &PluginTensorNode::describe);
   }
 
-  bool SEqualReduce(const PluginTensorNode* other, SEqualReducer equal) const {
-    return equal(name, other->name) && equal(dtype, other->dtype) && equal(ndim, other->ndim) &&
-           equal(device, other->device) && equal(describe, other->describe);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(name);
-    hash_reduce(dtype);
-    hash_reduce(ndim);
-    hash_reduce(device);
-    hash_reduce(describe);
-  }
-
+  static constexpr TVMFFISEqHashKind _type_s_eq_hash_kind = kTVMFFISEqHashKindTreeNode;
   static constexpr const char* _type_key = "msc.core.PluginTensor";
   TVM_DECLARE_FINAL_OBJECT_INFO(PluginTensorNode, Object);
 };
@@ -425,28 +407,17 @@ class PluginExternNode : public Object {
   /*! \brief Load extern from json string. */
   void FromJson(const std::string& json_str);
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("name", &name);
-    v->Visit("header", &header);
-    v->Visit("source", &source);
-    v->Visit("lib", &lib);
-    v->Visit("describe", &describe);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<PluginExternNode>()
+        .def_ro("name", &PluginExternNode::name)
+        .def_ro("header", &PluginExternNode::header)
+        .def_ro("source", &PluginExternNode::source)
+        .def_ro("lib", &PluginExternNode::lib)
+        .def_ro("describe", &PluginExternNode::describe);
   }
 
-  bool SEqualReduce(const PluginExternNode* other, SEqualReducer equal) const {
-    return equal(name, other->name) && equal(header, other->header) &&
-           equal(source, other->source) && equal(lib, other->lib) &&
-           equal(describe, other->describe);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(name);
-    hash_reduce(header);
-    hash_reduce(source);
-    hash_reduce(lib);
-    hash_reduce(describe);
-  }
-
+  static constexpr TVMFFISEqHashKind _type_s_eq_hash_kind = kTVMFFISEqHashKindTreeNode;
   static constexpr const char* _type_key = "msc.core.PluginExtern";
   TVM_DECLARE_FINAL_OBJECT_INFO(PluginExternNode, Object);
 };
@@ -521,41 +492,22 @@ class PluginNode : public Object {
   /*! \brief Find input ref index for device. */
   int FindDeviceRefIdx(const PluginTensor& tensor) const;
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("name", &name);
-    v->Visit("version", &version);
-    v->Visit("describe", &describe);
-    v->Visit("attrs", &attrs);
-    v->Visit("inputs", &inputs);
-    v->Visit("outputs", &outputs);
-    v->Visit("buffers", &buffers);
-    v->Visit("externs", &externs);
-    v->Visit("support_dtypes", &support_dtypes);
-    v->Visit("options", &options);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<PluginNode>()
+        .def_ro("name", &PluginNode::name)
+        .def_ro("version", &PluginNode::version)
+        .def_ro("describe", &PluginNode::describe)
+        .def_ro("attrs", &PluginNode::attrs)
+        .def_ro("inputs", &PluginNode::inputs)
+        .def_ro("outputs", &PluginNode::outputs)
+        .def_ro("buffers", &PluginNode::buffers)
+        .def_ro("externs", &PluginNode::externs)
+        .def_ro("support_dtypes", &PluginNode::support_dtypes)
+        .def_ro("options", &PluginNode::options);
   }
 
-  bool SEqualReduce(const PluginNode* other, SEqualReducer equal) const {
-    return equal(name, other->name) && equal(version, other->version) &&
-           equal(describe, other->describe) && equal(attrs, other->attrs) &&
-           equal(inputs, other->inputs) && equal(outputs, other->outputs) &&
-           equal(buffers, other->buffers) && equal(externs, other->externs) &&
-           equal(support_dtypes, other->support_dtypes) && equal(options, other->options);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(name);
-    hash_reduce(version);
-    hash_reduce(describe);
-    hash_reduce(attrs);
-    hash_reduce(inputs);
-    hash_reduce(outputs);
-    hash_reduce(buffers);
-    hash_reduce(externs);
-    hash_reduce(externs);
-    hash_reduce(support_dtypes);
-    hash_reduce(options);
-  }
-
+  static constexpr TVMFFISEqHashKind _type_s_eq_hash_kind = kTVMFFISEqHashKindTreeNode;
   static constexpr const char* _type_key = "msc.core.Plugin";
   TVM_DECLARE_FINAL_OBJECT_INFO(PluginNode, Object);
 };

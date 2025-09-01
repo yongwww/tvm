@@ -24,12 +24,11 @@
 #ifndef TVM_RELAX_TYPE_H_
 #define TVM_RELAX_TYPE_H_
 
+#include <tvm/ffi/function.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/ir/attrs.h>
 #include <tvm/ir/env_func.h>
-#include <tvm/ir/tensor_type.h>
 #include <tvm/ir/type.h>
-#include <tvm/ir/type_relation.h>
-#include <tvm/runtime/registry.h>
 #include <tvm/tir/expr.h>
 
 #include <string>
@@ -45,16 +44,10 @@ class ShapeTypeNode : public TypeNode {
   /*! \brief size of the shape. */
   int ndim;
 
-  void VisitAttrs(tvm::AttrVisitor* v) {
-    v->Visit("ndim", &ndim);
-    v->Visit("span", &span);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<ShapeTypeNode>().def_ro("ndim", &ShapeTypeNode::ndim);
   }
-
-  bool SEqualReduce(const ShapeTypeNode* other, SEqualReducer equal) const {
-    return equal(ndim, other->ndim);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const { hash_reduce(ndim); }
 
   static constexpr const char* _type_key = "relax.ShapeType";
   TVM_DECLARE_FINAL_OBJECT_INFO(ShapeTypeNode, TypeNode);
@@ -68,13 +61,67 @@ class ShapeType : public Type {
   TVM_DEFINE_NOTNULLABLE_OBJECT_REF_METHODS(ShapeType, Type, ShapeTypeNode);
 };
 
+/*!
+ * \brief Dynamic version of TensorType
+ *
+ * Use relax::TensorStructInfo for more detailed (possibly dynamic) shape constrains
+ */
+class TensorTypeNode : public TypeNode {
+ public:
+  /*!
+   * \brief The number of dimensions of the tensor, use -1 to denote tensor with unknown number of
+   * dimensions.
+   */
+  int ndim;
+  /*! \brief The content data type, use void to denote the dtype is unknown. */
+  DataType dtype;
+
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<TensorTypeNode>()
+        .def_ro("ndim", &TensorTypeNode::ndim)
+        .def_ro("dtype", &TensorTypeNode::dtype);
+  }
+
+  inline bool IsUnknownNdim() const { return ndim == kUnknownNDim; }
+
+  inline bool IsUnknownDtype() const { return dtype.is_void(); }
+
+  static constexpr const char* _type_key = "relax.DynTensorType";
+  TVM_DECLARE_FINAL_OBJECT_INFO(TensorTypeNode, TypeNode);
+};
+
+/*!
+ * \brief Managed reference to TensorTypeNode.
+ * \sa TensorTypeNode.
+ */
+class TensorType : public Type {
+ public:
+  /*!
+   * \brief Constructor.
+   * \param ndim The number of dimensions of the tensor.
+   * \param dtype The runtime dtype of the tensor's elements.
+   * \param span The span.
+   */
+  TVM_DLL TensorType(int ndim, DataType dtype, Span span = Span());
+
+  /*!
+   * \brief Create a TensorType with unknown ndim.
+   */
+  TVM_DLL static TensorType CreateUnknownNDim(DataType dtype, Span span = Span());
+
+  TVM_DEFINE_OBJECT_REF_METHODS(TensorType, Type, TensorTypeNode);
+};
+
+using TensorTypeNode = TensorTypeNode;
+using TensorType = TensorType;
+
 class ObjectTypeNode : public TypeNode {
  public:
-  void VisitAttrs(tvm::AttrVisitor* v) { v->Visit("span", &span); }
-
-  bool SEqualReduce(const ObjectTypeNode* other, SEqualReducer equal) const { return true; }
-
-  void SHashReduce(SHashReducer hash_reduce) const { hash_reduce(0); }
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<ObjectTypeNode>();
+  }
 
   static constexpr const char* _type_key = "relax.ObjectType";
   TVM_DECLARE_FINAL_OBJECT_INFO(ObjectTypeNode, TypeNode);
@@ -87,68 +134,12 @@ class ObjectType : public Type {
   TVM_DEFINE_NOTNULLABLE_OBJECT_REF_METHODS(ObjectType, Type, ObjectTypeNode);
 };
 
-class DynTensorTypeNode : public BaseTensorTypeNode {
- public:
-  /*!
-   * \brief The number of dimensions of the tensor, use -1 to denote tensor with unknwon number of
-   * dimensions.
-   */
-  int ndim;
-  /*! \brief The content data type, use void to denote the dtype is unknown. */
-  DataType dtype;
-
-  void VisitAttrs(tvm::AttrVisitor* v) {
-    v->Visit("ndim", &ndim);
-    v->Visit("dtype", &dtype);
-    v->Visit("span", &span);
-  }
-
-  bool SEqualReduce(const DynTensorTypeNode* other, SEqualReducer equal) const {
-    return equal(ndim, other->ndim) && equal(dtype, other->dtype);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce(ndim);
-    hash_reduce(dtype);
-  }
-
-  inline bool IsUnknownNdim() const { return ndim == kUnknownNDim; }
-
-  inline bool IsUnknownDtype() const { return dtype.is_void(); }
-
-  static constexpr const char* _type_key = "relax.DynTensorType";
-  TVM_DECLARE_FINAL_OBJECT_INFO(DynTensorTypeNode, BaseTensorTypeNode);
-};
-
-/*!
- * \brief Managed reference to DynTensorTypeNode.
- * \sa DynTensorTypeNode.
- */
-class DynTensorType : public Type {
- public:
-  /*!
-   * \brief Constructor.
-   * \param ndim The number of dimensions of the tensor.
-   * \param dtype The runtime dtype of the tensor's elements.
-   * \param span The span.
-   */
-  TVM_DLL DynTensorType(int ndim, DataType dtype, Span span = Span());
-
-  /*!
-   * \brief Create a DynTensorType with unknown ndim.
-   */
-  TVM_DLL static DynTensorType CreateUnknownNDim(DataType dtype, Span span = Span());
-
-  TVM_DEFINE_OBJECT_REF_METHODS(DynTensorType, Type, DynTensorTypeNode);
-};
-
 class PackedFuncTypeNode : public TypeNode {
  public:
-  void VisitAttrs(tvm::AttrVisitor* v) { v->Visit("span", &span); }
-
-  bool SEqualReduce(const PackedFuncTypeNode* other, SEqualReducer equal) const { return true; }
-
-  void SHashReduce(SHashReducer hash_reduce) const { hash_reduce(0); }
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<PackedFuncTypeNode>();
+  }
 
   static constexpr const char* _type_key = "relax.PackedFuncType";
   TVM_DECLARE_FINAL_OBJECT_INFO(PackedFuncTypeNode, TypeNode);

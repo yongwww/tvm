@@ -25,6 +25,7 @@
 
 #include <tvm/arith/analyzer.h>
 #include <tvm/arith/int_solver.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/tir/stmt_functor.h>
 #include <tvm/tir/transform.h>
 
@@ -173,7 +174,7 @@ class IRConvertSSA final : public StmtExprMutator {
         return DictAttrs();
       }
 
-      Map<String, ObjectRef> dict;
+      Map<String, ffi::Any> dict;
       bool made_change = false;
 
       for (const auto& [key, old_value] : func->attrs->dict) {
@@ -228,13 +229,13 @@ class IRConvertSSA final : public StmtExprMutator {
   PrimExpr VisitExpr_(const BufferLoadNode* op) final {
     auto node = Downcast<BufferLoad>(StmtExprMutator::VisitExpr_(op));
     auto output = VisitBufferAccess(std::move(node));
-    return std::move(output);
+    return output;
   }
 
   Stmt VisitStmt_(const BufferStoreNode* op) final {
     auto node = Downcast<BufferStore>(StmtExprMutator::VisitStmt_(op));
     auto output = VisitBufferAccess(std::move(node));
-    return std::move(output);
+    return output;
   }
 
   Stmt VisitStmt_(const DeclBufferNode* op) final {
@@ -243,7 +244,7 @@ class IRConvertSSA final : public StmtExprMutator {
     if (!new_buffer.same_as(decl->buffer)) {
       decl.CopyOnWrite()->buffer = std::move(new_buffer);
     }
-    return std::move(decl);
+    return decl;
   }
 
   Stmt VisitStmt_(const BlockNode* op) final {
@@ -594,18 +595,13 @@ Region ConvertRegion(const MatchBufferRegion& match_buffer, const Region& region
   return result;
 }
 
-Bool IsFromLegacyTESchedule(PrimFunc f) {
-  Optional<Bool> from_legacy_te_schedule = f->GetAttr("from_legacy_te_schedule", Bool(false));
-  return from_legacy_te_schedule.value();
-}
-
 Optional<arith::IntConstraints> ConditionalBoundsContext::TrySolveCondition() {
   // extract equations and related vars from condition expression.
   // currently only extract simple integral equations which could be solvable.
   arith::Analyzer analyzer;
   PrimExpr condition = analyzer.Simplify(condition_);
   if (is_const_int(condition)) {
-    return NullOpt;
+    return std::nullopt;
   }
   Array<PrimExpr> equations;
   Array<Var> vars;
@@ -649,7 +645,7 @@ Optional<arith::IntConstraints> ConditionalBoundsContext::TrySolveCondition() {
   };
   fvisit(condition);
   if (equations.empty() || vars.empty()) {
-    return NullOpt;
+    return std::nullopt;
   }
   // build dom ranges for related vars
   Map<Var, Range> ranges;
@@ -672,9 +668,9 @@ Optional<arith::IntConstraints> ConditionalBoundsContext::TrySolveCondition() {
   arith::IntConstraints constraint(vars, ranges, equations);
   arith::IntConstraints result = arith::SolveInequalitiesToRange(constraint);
   if (!result->relations.empty()) {
-    return NullOpt;
+    return std::nullopt;
   }
-  return std::move(result);
+  return result;
 }
 
 ConditionalBoundsContext::ConditionalBoundsContext(
@@ -757,7 +753,7 @@ class StorageAlignCollector : public StmtVisitor {
     if (it != op->annotations.end()) {
       auto storage_align_annotation = Downcast<StorageAlignAnnotation>((*it).second);
       for (const auto& storage_align_tuple : storage_align_annotation) {
-        int buffer_index = storage_align_tuple[0]->value;
+        int buffer_index = storage_align_tuple.get<0>();
         const Buffer& buffer = op->writes[buffer_index]->buffer;
         storage_align_[buffer->data].push_back(storage_align_tuple);
       }
@@ -771,7 +767,7 @@ class StorageAlignCollector : public StmtVisitor {
     if (it != op->annotations.end()) {
       auto storage_align_annotation = Downcast<StorageAlignAnnotation>((*it).second);
       for (const auto& storage_align_tuple : storage_align_annotation) {
-        int buffer_index = storage_align_tuple[0]->value;
+        int buffer_index = storage_align_tuple.get<0>();
         // the first buffer idx info is meaningless for allocate
         // stmt and should set as negative intentionally.
         ICHECK_EQ(buffer_index, -1);
@@ -855,7 +851,10 @@ Pass ConvertSSA() {
   return tvm::transform::CreateModulePass(pass_func, 0, "tir.ConvertSSA", {});
 }
 
-TVM_REGISTER_GLOBAL("tir.transform.ConvertSSA").set_body_typed(ConvertSSA);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("tir.transform.ConvertSSA", ConvertSSA);
+});
 
 }  // namespace transform
 }  // namespace tir

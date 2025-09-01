@@ -18,6 +18,7 @@
  */
 #include "utils.h"
 
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/analysis.h>
 #include <tvm/relax/dataflow_matcher.h>
 #include <tvm/relax/expr.h>
@@ -64,7 +65,21 @@ Map<String, IntImm> ExtractArgIdx(String pattern_name, Function f) {
   return arg_idx;
 }
 
-TVM_REGISTER_GLOBAL("relax.contrib.extract_arg_idx").set_body_typed(ExtractArgIdx);
+/*!
+ * \brief Utility function to find the string pattern in string str
+ * \param str the main string to check the pattern
+ * \param pattern the pattern to check in the main string
+ * \return return true if the main string ends with pattern, false otherwise
+ */
+bool EndsWithPattern(const std::string& str, const std::string& pattern) {
+  if (str.length() < pattern.length()) return false;
+  return str.compare(str.length() - pattern.length(), pattern.length(), pattern) == 0;
+}
+
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.contrib.extract_arg_idx", ExtractArgIdx);
+});
 
 }  // namespace backend
 }  // namespace relax

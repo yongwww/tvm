@@ -22,6 +22,8 @@
  */
 #include "codegen.h"
 
+#include <tvm/ffi/reflection/registry.h>
+
 namespace tvm {
 namespace contrib {
 namespace msc {
@@ -145,18 +147,21 @@ const Array<Doc> TensorflowCodeGen::GetOpCodes(const MSCJoint& node) {
   try {
     return it->second->GetDocs();
   } catch (runtime::InternalError& err) {
-    LOG(WARNING) << "Failed to get docs for " << node << " : " << err.message();
+    LOG(WARNING) << "Failed to get docs for " << node << " : " << err.what();
     throw err;
   }
 }
 
-TVM_REGISTER_GLOBAL("msc.framework.tensorflow.GetTensorflowSources")
-    .set_body_typed([](const MSCGraph& graph, const String& codegen_config,
-                       const String& print_config) -> Map<String, String> {
-      TensorflowCodeGen codegen = TensorflowCodeGen(graph, codegen_config);
-      codegen.Init();
-      return codegen.GetSources(print_config);
-    });
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("msc.framework.tensorflow.GetTensorflowSources",
+                        [](const MSCGraph& graph, const String& codegen_config,
+                           const String& print_config) -> Map<String, String> {
+                          TensorflowCodeGen codegen = TensorflowCodeGen(graph, codegen_config);
+                          codegen.Init();
+                          return codegen.GetSources(print_config);
+                        });
+});
 
 }  // namespace msc
 }  // namespace contrib

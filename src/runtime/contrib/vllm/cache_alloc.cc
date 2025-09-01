@@ -17,8 +17,9 @@
  * under the License.
  */
 #include <cuda_runtime.h>
+#include <tvm/ffi/function.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/runtime/ndarray.h>
-#include <tvm/runtime/registry.h>
 
 namespace tvm {
 namespace runtime {
@@ -48,7 +49,10 @@ Array<NDArray> AllocateKVCache(int head_size, int num_layers, int num_heads, int
   return cache;
 }
 
-TVM_REGISTER_GLOBAL("tvm.contrib.vllm.allocate_kv_cache").set_body_typed(AllocateKVCache);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("tvm.contrib.vllm.allocate_kv_cache", AllocateKVCache);
+});
 
 }  // namespace vllm
 }  // namespace runtime

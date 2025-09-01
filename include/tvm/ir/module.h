@@ -24,15 +24,15 @@
 #ifndef TVM_IR_MODULE_H_
 #define TVM_IR_MODULE_H_
 
-#include <tvm/ir/adt.h>
+#include <tvm/ffi/container/array.h>
+#include <tvm/ffi/container/map.h>
+#include <tvm/ffi/reflection/registry.h>
+#include <tvm/ffi/string.h>
 #include <tvm/ir/expr.h>
 #include <tvm/ir/function.h>
 #include <tvm/ir/global_info.h>
 #include <tvm/ir/source_map.h>
 #include <tvm/ir/type.h>
-#include <tvm/runtime/container/array.h>
-#include <tvm/runtime/container/map.h>
-#include <tvm/runtime/container/string.h>
 
 #include <string>
 #include <unordered_map>
@@ -58,8 +58,6 @@ class IRModuleNode : public Object {
  public:
   /*! \brief A map from ids to all global functions. */
   Map<GlobalVar, BaseFunc> functions;
-  /*! \brief A map from global type vars to ADT type data. */
-  Map<GlobalTypeVar, TypeData> type_definitions;
   /*! \brief The source map for the module. */
   SourceMap source_map;
   /* \brief Additional attributes storing meta-data about the module. */
@@ -72,21 +70,6 @@ class IRModuleNode : public Object {
    */
   Map<String, GlobalVar> global_var_map_;
 
-  /*! \brief A map from string names to global type variables (ADT names)
-   * that ensures global uniqueness.
-   */
-  Map<String, GlobalTypeVar> global_type_var_map_;
-
-  /*! \brief A map from constructor tags to constructor objects
-   * for convenient access
-   */
-  std::unordered_map<int32_t, Constructor> constructor_tag_map_;
-
-  /*! \brief The files previously imported, required to ensure
-      importing is idempotent for each module.
-   */
-  std::unordered_set<String> import_set_;
-
   /*!
    * \brief Get a module attribute.
    *
@@ -95,7 +78,7 @@ class IRModuleNode : public Object {
    *
    * \return The result
    *
-   * \tparam TOBjectRef the expected object type.
+   * \tparam TObjectRef the expected object type.
    * \throw Error if the key exists but the value does not match TObjectRef
    *
    * \code
@@ -109,7 +92,7 @@ class IRModuleNode : public Object {
   template <typename TObjectRef>
   Optional<TObjectRef> GetAttr(
       const std::string& attr_key,
-      Optional<TObjectRef> default_value = Optional<TObjectRef>(nullptr)) const {
+      Optional<TObjectRef> default_value = Optional<TObjectRef>(std::nullopt)) const {
     return attrs.GetAttr(attr_key, default_value);
   }
   // variant that uses TObjectRef to enable implicit conversion to default value.
@@ -147,19 +130,24 @@ class IRModuleNode : public Object {
 
   IRModuleNode() : source_map() {}
 
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("functions", &functions);
-    v->Visit("type_definitions", &type_definitions);
-    v->Visit("global_var_map_", &global_var_map_);
-    v->Visit("global_type_var_map_", &global_type_var_map_);
-    v->Visit("source_map", &source_map);
-    v->Visit("attrs", &attrs);
-    v->Visit("global_infos", &global_infos);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<IRModuleNode>()
+        .def_ro("functions", &IRModuleNode::functions)
+        .def_ro("global_var_map_", &IRModuleNode::global_var_map_)
+        .def_ro("source_map", &IRModuleNode::source_map)
+        .def_ro("attrs", &IRModuleNode::attrs)
+        .def_ro("global_infos", &IRModuleNode::global_infos);
+    // register custom structural equal and hash.
+    refl::TypeAttrDef<IRModuleNode>()
+        .def("__s_equal__", &IRModuleNode::SEqual)
+        .def("__s_hash__", &IRModuleNode::SHash);
   }
 
-  TVM_DLL bool SEqualReduce(const IRModuleNode* other, SEqualReducer equal) const;
-
-  TVM_DLL void SHashReduce(SHashReducer hash_reduce) const;
+  TVM_DLL bool SEqual(const IRModuleNode* other,
+                      ffi::TypedFunction<bool(AnyView, AnyView, bool, AnyView)> equal) const;
+  TVM_DLL uint64_t SHash(uint64_t init_hash,
+                         ffi::TypedFunction<uint64_t(AnyView, uint64_t, bool)> hash) const;
 
   /*!
    * \brief Add a function to the global environment.
@@ -180,39 +168,11 @@ class IRModuleNode : public Object {
   TVM_DLL void AddUnchecked(const GlobalVar& var, const BaseFunc& func);
 
   /*!
-   * \brief Add a type-level definition to the global environment.
-   * \param var The var of the global type definition.
-   * \param type The ADT.
-   * \param update Controls whether you can replace a definition in the
-   * environment.
-   */
-  TVM_DLL void AddTypeDef(const GlobalTypeVar& var, const TypeData& type, bool update = false);
-
-  /*!
-   * \brief Add a type-level definition to the global environment.
-   * \param var The var of the global type definition.
-   * \param type The ADT.
-   * \param update Controls whether you can replace a definition in the
-   * environment.
-   *
-   * It does not do type checking as AddTypeDef does.
-   */
-  TVM_DLL void AddTypeDefUnchecked(const GlobalTypeVar& var, const TypeData& type,
-                                   bool update = false);
-
-  /*!
    * \brief Update a function in the global environment.
    * \param var The name of the global function to update.
    * \param func The new function.
    */
   TVM_DLL void Update(const GlobalVar& var, const BaseFunc& func);
-
-  /*!
-   * \brief Update a type definition in the global environment.
-   * \param var The name of the global type definition to update.
-   * \param type The new ADT.
-   */
-  TVM_DLL void UpdateTypeDef(const GlobalTypeVar& var, const TypeData& type);
 
   /*!
    * \brief Update an array of global infos in the global environment.
@@ -235,13 +195,6 @@ class IRModuleNode : public Object {
   TVM_DLL bool ContainGlobalVar(const String& name) const;
 
   /*!
-   * \brief Check if the global_type_var_map_ contains a global type variable.
-   * \param name The variable name.
-   * \returns true if contains, otherise false.
-   */
-  TVM_DLL bool ContainGlobalTypeVar(const String& name) const;
-
-  /*!
    * \brief Lookup a global function by its variable.
    * \param str The unique string specifying the global variable.
    * \returns The global variable.
@@ -254,27 +207,6 @@ class IRModuleNode : public Object {
    * \returns An array of global vars
    */
   TVM_DLL Array<GlobalVar> GetGlobalVars() const;
-
-  /*!
-   * \brief Look up a global function by its name.
-   * \param str The unique string specifying the global variable.
-   * \returns The global variable.
-   */
-  TVM_DLL GlobalTypeVar GetGlobalTypeVar(const String& str) const;
-
-  /*!
-   * \brief Collect all global type vars defined in this module.
-   * \returns An array of global type vars
-   */
-  TVM_DLL Array<GlobalTypeVar> GetGlobalTypeVars() const;
-
-  /*!
-   * \brief Find constructor of ADT using name
-   * \param adt name of the ADT the constructor belongs to
-   * \param cons name of the constructor
-   * \returns Constructor of ADT, error if not found
-   */
-  TVM_DLL Constructor GetConstructor(const String& adt, const String& cons) const;
 
   /*!
    * \brief Look up a global function by its variable.
@@ -291,27 +223,6 @@ class IRModuleNode : public Object {
   TVM_DLL BaseFunc Lookup(const String& name) const;
 
   /*!
-   * \brief Look up a global type definition by its variable.
-   * \param var The var of the global type definition.
-   * \return The type definition.
-   */
-  TVM_DLL TypeData LookupTypeDef(const GlobalTypeVar& var) const;
-
-  /*!
-   * \brief Look up a global type definition by its name.
-   * \param var The name of the global type definition.
-   * \return The type definition.
-   */
-  TVM_DLL TypeData LookupTypeDef(const String& var) const;
-
-  /*!
-   * \brief Look up a constructor by its tag.
-   * \param tag The tag for the constructor.
-   * \return The constructor object.
-   */
-  TVM_DLL Constructor LookupTag(const int32_t tag);
-
-  /*!
    * \brief Update the functions inside this environment by
    *        functions in another environment.
    * \param other The other environment.
@@ -323,24 +234,6 @@ class IRModuleNode : public Object {
    * \returns The shallow copy of the IRModule.
    */
   TVM_DLL IRModule ShallowCopy();
-
-  /*!
-   * \brief Import Relay code from the file at path.
-   * \param path The path of the Relay code to import.
-   *
-   * \note The path resolution behavior is standard,
-   * if abosolute will be the absolute file, if
-   * relative it will be resovled against the current
-   * working directory.
-   */
-  TVM_DLL void Import(const String& path);
-
-  /*!
-   * \brief Import Relay code from the file at path, relative to the standard library.
-   * \param path The path of the Relay code to import.
-   */
-  TVM_DLL void ImportFromStd(const String& path);
-
   /*!
    * \brief The set of imported files.
    */
@@ -348,14 +241,12 @@ class IRModuleNode : public Object {
 
   TVM_OBJECT_ENABLE_SCRIPT_PRINTER();
 
-  static constexpr const char* _type_key = "IRModule";
-  static constexpr const bool _type_has_method_sequal_reduce = true;
-  static constexpr const bool _type_has_method_shash_reduce = true;
+  static constexpr const char* _type_key = "ir.IRModule";
+  static constexpr TVMFFISEqHashKind _type_s_eq_hash_kind = kTVMFFISEqHashKindTreeNode;
+
   TVM_DECLARE_FINAL_OBJECT_INFO(IRModuleNode, Object);
 
  private:
-  /*! \brief Helper function for registering a typedef's constructors */
-  void RegisterConstructors(const GlobalTypeVar& var, const TypeData& type);
   friend class IRModule;
 };
 
@@ -368,15 +259,11 @@ class IRModule : public ObjectRef {
   /*!
    * \brief constructor
    * \param functions Functions in the module.
-   * \param type_definitions Type definitions in the module.
-   * \param import_set Set of imported files in the module.
    * \param map The module source map.
    * \param attrs The module meta-data attributes.
    * \param global_infos Global infos in the module.
    */
-  TVM_DLL explicit IRModule(Map<GlobalVar, BaseFunc> functions,
-                            Map<GlobalTypeVar, TypeData> type_definitions = {},
-                            std::unordered_set<String> import_set = {}, SourceMap map = {},
+  TVM_DLL explicit IRModule(Map<GlobalVar, BaseFunc> functions, SourceMap map = {},
                             DictAttrs attrs = DictAttrs(),
                             Map<String, Array<GlobalInfo>> global_infos = {});
 
@@ -395,50 +282,11 @@ class IRModule : public ObjectRef {
   }
 
   /*!
-   * \brief Constructs a module from a standalone expression \p expr.
-   *
-   * If \p expr is a function it will be bound directly. Otherwise a function over the free
-   * variables of \p expr (possibly none) with \p expr as body is created and bound.
-   *
-   * The function is bound to, in preference order:
-   *  - The "global_symbol" attribute of \p expr, if it is a function with that attribute.
-   *  - 'main'
-   *  - A unique name derived from 'main' if 'main' is already bound in \p global_funcs.
-   *
-   * Additional global functions and type definitions may be included in the result module.
-   *
-   * See also \p FromExpr.
-   *
-   * \param expr The expression to set as the main function to the module.
-   * \param global_funcs The global function map. Default empty.
-   * \param type_definitions The global type definition map. Default empty.
-   * \param import_set Set of external modules already imported. Default empty.
-   *
-   * \returns A module with \p expr set as the main function, and the global var to which
-   * \p expr was bound (typcially 'main').
-   *
-   * TODO(mbs): Does import_set and the bound global var need to be exposed via ffi?
-   */
-  static std::pair<IRModule, GlobalVar> FromExprInContext(
-      const RelayExpr& expr, const Map<GlobalVar, BaseFunc>& global_funcs = {},
-      const Map<GlobalTypeVar, TypeData>& type_definitions = {},
-      std::unordered_set<String> import_set = {});
-
-  /*!
    * \brief As for \p FromExprInContext, but assuming \p expr is bound to 'main' and no
    * imports.
    */
-  TVM_DLL static IRModule FromExpr(const RelayExpr& expr,
-                                   const Map<GlobalVar, BaseFunc>& global_funcs = {},
-                                   const Map<GlobalTypeVar, TypeData>& type_definitions = {});
-
-  /*!
-   * \brief Parse text format source file into an IRModule.
-   * \param text A string of Relay source code.
-   * \param source_path The path to the source file.
-   * \return A Relay module.
-   */
-  TVM_DLL static IRModule FromText(const String& text, const String& source_path);
+  TVM_DLL static IRModule FromExpr(const RelaxExpr& expr,
+                                   const Map<GlobalVar, BaseFunc>& global_funcs = {});
 
   /*!
    * \brief Create a shallow copy of an IRModule.
@@ -449,9 +297,6 @@ class IRModule : public ObjectRef {
 
   /*! \brief Declare the container type. */
   using ContainerType = IRModuleNode;
-
-  /*! \brief Declare whether Ref is nullable. */
-  static constexpr bool _type_is_nullable = false;
 
   // allow copy on write.
   TVM_DEFINE_OBJECT_REF_COW_METHOD(IRModuleNode);
@@ -465,46 +310,8 @@ namespace attr {
  * \brief Name of the module
  *
  * Type: String
- *
- * \sa tvm::runtime::String
  */
 constexpr const char* kModuleName = "mod_name";
-
-/*!
- * \brief Executor targeted by the module
- *
- * Type: Executor
- *
- * \sa tvm::relay::Executor
- */
-constexpr const char* kExecutor = "executor";
-
-/*!
- * \brief Runtime target of the module
- *
- * Type: Runtime
- *
- * \sa tvm::relay::Runtime
- */
-constexpr const char* kRuntime = "runtime";
-
-/*!
- * \brief workspace memory pools of the module
- *
- * Type: WorkspaceMemoryPools
- *
- * \sa tvm::WorkspaceMemoryPools
- */
-constexpr const char* kWorkspaceMemoryPools = "workspace_memory_pools";
-
-/*!
- * \brief constant memory pools of the module
- *
- * Type: ConstantMemoryPools
- *
- * \sa tvm::ConstantMemoryPools
- */
-constexpr const char* kConstantMemoryPools = "constant_memory_pools";
 
 /*
  * \brief All the runtime::NDArrays extracted from PrimFunc tir::AllocateConst nodes. The

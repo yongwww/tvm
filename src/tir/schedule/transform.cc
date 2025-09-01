@@ -17,6 +17,8 @@
  * under the License.
  */
 
+#include <tvm/ffi/reflection/registry.h>
+
 #include "../transforms/ir_utils.h"
 #include "./utils.h"
 
@@ -26,7 +28,7 @@ namespace tir {
 /******** Annotation ********/
 
 Block WithAnnotation(const BlockNode* block, const String& attr_key, const ObjectRef& attr_value) {
-  Map<String, ObjectRef> annotations = block->annotations;
+  Map<String, Any> annotations = block->annotations;
   annotations.Set(attr_key, attr_value);
   ObjectPtr<BlockNode> new_block = make_object<BlockNode>(*block);
   new_block->annotations = std::move(annotations);
@@ -226,7 +228,7 @@ Stmt ReplaceBufferMutator::VisitStmt_(const BlockNode* block) {
     if (block_sref_reuse_ != nullptr) {
       block_sref_reuse_->Set(GetRef<Block>(block), new_block);
     }
-    return std::move(new_block);
+    return new_block;
   }
 }
 
@@ -323,7 +325,7 @@ Optional<LoopRV> TileWithTensorIntrin(const tir::Schedule& sch, const tir::Block
   Optional<tir::TensorizeInfo> opt_tensorize_info =
       GetTensorizeLoopMapping(sch->state(), sch->GetSRef(block_rv),
                               tir::TensorIntrin::Get(intrin_name).value()->desc, allow_padding);
-  if (!opt_tensorize_info) return NullOpt;
+  if (!opt_tensorize_info) return std::nullopt;
   const tir::TensorizeInfoNode* info = opt_tensorize_info.value().get();
   if (info->block_iter_paddings.defined()) {
     // We have to track whether each producer or consumer is padded.
@@ -413,9 +415,9 @@ Optional<LoopRV> TileWithTensorIntrin(const tir::Schedule& sch, const tir::Block
     int64_t total = int_block_extent->value;
     int64_t inner = int_desc_extent->value;
     ICHECK_EQ(total % inner, 0);
-    // Do the split. Leave the outer extent as NullOpt (unspecified) so that the split factors
+    // Do the split. Leave the outer extent as std::nullopt (unspecified) so that the split factors
     // can be used for different extents (needed during tuning).
-    Array<LoopRV> split = sch->Split(loop2rv.at(block_loop_sref), {NullOpt, Integer(inner)});
+    Array<LoopRV> split = sch->Split(loop2rv.at(block_loop_sref), {std::nullopt, Integer(inner)});
     ICHECK_EQ(split.size(), 2);
     inner_loops.insert(sch->GetSRef(split[1]).operator->());
     // The inner split will be reordered to the loop domain that is tensorized
@@ -439,7 +441,10 @@ Optional<LoopRV> TileWithTensorIntrin(const tir::Schedule& sch, const tir::Block
   return reorder_suffix[0];
 }
 
-TVM_REGISTER_GLOBAL("tir.schedule.TileWithTensorIntrin").set_body_typed(TileWithTensorIntrin);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("tir.schedule.TileWithTensorIntrin", TileWithTensorIntrin);
+});
 
 /******** BlockBufferAccessSimplifier ********/
 void BlockBufferAccessSimplifier::SimplifyAccessRegion(Array<BufferRegion>* old_access_regions) {
@@ -470,19 +475,19 @@ Stmt BlockBufferAccessSimplifier::VisitStmt_(const BlockNode* op) {
   auto* n = block.CopyOnWrite();
   SimplifyAccessRegion(&n->reads);
   SimplifyAccessRegion(&n->writes);
-  return std::move(block);
+  return block;
 }
 
 Stmt BlockBufferAccessSimplifier::VisitStmt_(const BufferStoreNode* op) {
   BufferStore node = Downcast<BufferStore>(arith::IRMutatorWithAnalyzer::VisitStmt_(op));
   SimplifyBufferIndices(&node.CopyOnWrite()->indices);
-  return std::move(node);
+  return node;
 }
 
 PrimExpr BlockBufferAccessSimplifier::VisitExpr_(const BufferLoadNode* op) {
   BufferLoad node = Downcast<BufferLoad>(arith::IRMutatorWithAnalyzer::VisitExpr_(op));
   SimplifyBufferIndices(&node.CopyOnWrite()->indices);
-  return std::move(node);
+  return node;
 }
 
 /******** PrimFunc-level analysis and transformation ********/
@@ -508,15 +513,15 @@ Optional<ObjectRef> NormalizePrimFunc(Schedule sch) {
     Array<PrimExpr> binds = GetBlockRealize(sch->state(), block_sref)->iter_values;
     if (loops.size() == 0) continue;
     if (loops.size() != binds.size()) {
-      return NullOpt;
+      return std::nullopt;
     }
     for (int i = 0, n = loops.size(); i < n; ++i) {
       const ForNode* loop = TVM_SREF_TO_FOR(loops[i]);
       if (binds[i].get() != loop->loop_var.get()) {
-        return NullOpt;
+        return std::nullopt;
       }
       if (!is_zero(loop->min)) {
-        return NullOpt;
+        return std::nullopt;
       }
     }
   }
@@ -557,7 +562,10 @@ Optional<ObjectRef> NormalizePrimFunc(Schedule sch) {
   return Array<ObjectRef>{leaf_blocks, block_loops, block_iters, block_is_reduction};
 }
 
-TVM_REGISTER_GLOBAL("tir.schedule.NormalizePrimFunc").set_body_typed(NormalizePrimFunc);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("tir.schedule.NormalizePrimFunc", NormalizePrimFunc);
+});
 
 }  // namespace tir
 }  // namespace tvm

@@ -21,6 +21,7 @@
  * \brief Transform all reshape within dataflow block to a relax.reshape operator
  */
 #include <tvm/arith/analyzer.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/analysis.h>
 #include <tvm/relax/expr_functor.h>
 #include <tvm/relax/transform.h>
@@ -108,7 +109,7 @@ class DataflowReshapeRewriter : public ExprMutator {
 
   bool IsCallingTIRReshape(const CallNode* call, Expr inp) {
     const GlobalVar& global_var = Downcast<GlobalVar>(call->args[0]);
-    const auto* func = mod_->functions.Get(global_var).as<tir::PrimFuncNode>();
+    const auto* func = mod_->functions.Get(global_var).value().as<tir::PrimFuncNode>();
     ICHECK_NOTNULL(func);
     if (!HasReshapePattern(GetRef<tir::PrimFunc>(func))) {
       return false;
@@ -159,15 +160,16 @@ Expr RewriteDataflowReshape(const Function& f, const IRModule& mod) {
 namespace transform {
 
 Pass RewriteDataflowReshape() {
-  runtime::TypedPackedFunc<Function(Function, IRModule, PassContext)> pass_func =
-      [=](Function f, IRModule m, PassContext pc) {
-        return Downcast<Function>(RewriteDataflowReshape(f, m));
-      };
+  auto pass_func = [=](Function f, IRModule m, PassContext pc) {
+    return Downcast<Function>(RewriteDataflowReshape(f, m));
+  };
   return CreateFunctionPass(pass_func, 0, "RewriteDataflowReshape", {});
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.RewriteDataflowReshape")
-    .set_body_typed(RewriteDataflowReshape);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.transform.RewriteDataflowReshape", RewriteDataflowReshape);
+});
 
 }  // namespace transform
 

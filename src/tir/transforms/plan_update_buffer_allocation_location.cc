@@ -22,6 +22,7 @@
  * \file plan_update_buffer_allocation_location.cc
  */
 
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/tir/analysis.h>
 #include <tvm/tir/stmt_functor.h>
 #include <tvm/tir/transform.h>
@@ -156,7 +157,7 @@ class BufferAllocationLocator : public StmtExprMutator {
       node.CopyOnWrite()->body = InjectOpaqueBlock(node->body, new_block_alloc_bufs);
     }
 
-    return std::move(node);
+    return node;
   }
 
   Stmt VisitStmt_(const BlockNode* op) final {
@@ -212,7 +213,7 @@ class BufferAllocationLocator : public StmtExprMutator {
                        /*writes=*/{},
                        /*name_hint=*/"",
                        /*body=*/std::move(body),
-                       /*init=*/NullOpt,
+                       /*init=*/std::nullopt,
                        /*alloc_buffers=*/alloc_buffers);
     ObjectPtr<BlockNode> n = CopyOnWrite(opaque_block.get());
     Array<Array<BufferRegion>> access =
@@ -220,7 +221,7 @@ class BufferAllocationLocator : public StmtExprMutator {
     n->reads = access[0];
     n->writes = access[1];
     BlockRealize realize({}, Bool(true), Block(n));
-    return std::move(realize);
+    return realize;
   }
 
   Array<BufferRegion> RemoveRedundantBufferRegion(const Array<BufferRegion>& region) const {
@@ -242,15 +243,10 @@ class BufferAllocationLocator : public StmtExprMutator {
 };
 
 PrimFunc PlanAndUpdateBufferAllocationLocation(PrimFunc func) {
-  // Only apply this pass to TIR that is not from TE schedules
-  if (!IsFromLegacyTESchedule(func)) {
-    auto fptr = func.CopyOnWrite();
-    BufferAllocationLocator locator(func);
-    fptr->body = locator(fptr->body);
-    return func;
-  } else {
-    return func;
-  }
+  auto fptr = func.CopyOnWrite();
+  BufferAllocationLocator locator(func);
+  fptr->body = locator(fptr->body);
+  return func;
 }
 
 namespace transform {
@@ -262,8 +258,11 @@ Pass PlanAndUpdateBufferAllocationLocation() {
   return CreatePrimFuncPass(pass_func, 0, "tir.PlanAndUpdateBufferAllocationLocation", {});
 }
 
-TVM_REGISTER_GLOBAL("tir.transform.PlanAndUpdateBufferAllocationLocation")
-    .set_body_typed(PlanAndUpdateBufferAllocationLocation);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("tir.transform.PlanAndUpdateBufferAllocationLocation",
+                        PlanAndUpdateBufferAllocationLocation);
+});
 
 }  // namespace transform
 

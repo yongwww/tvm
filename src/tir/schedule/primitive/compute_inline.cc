@@ -324,7 +324,7 @@ class BaseInliner : public StmtExprMutator {
     bool is_scope_root = src_block.get() == scope_root_sref_->stmt;
     tgt_block = UpdateBuffersInBlockSignature(std::move(tgt_block), is_scope_root);
     block_reuse.Set(src_block, tgt_block);
-    return std::move(tgt_block);
+    return tgt_block;
   }
 
  private:
@@ -378,8 +378,8 @@ class BaseInliner : public StmtExprMutator {
     if (!is_scope_root && (std::any_of(reads.begin(), reads.end(), f_access_inline_buffer) ||
                            std::any_of(writes.begin(), writes.end(), f_access_inline_buffer))) {
       Array<Array<BufferRegion>> inspected = GetBlockReadWriteRegion(block, buffer_var_map_);
-      reads = std::move(inspected[0]);
-      writes = std::move(inspected[1]);
+      reads = inspected[0];
+      writes = inspected[1];
     }
     // Step 3. Assemble the result
     BlockNode* n = block.CopyOnWrite();
@@ -527,7 +527,7 @@ class ComputeInliner : public BaseInliner {
   PrimExpr VisitExpr_(const BufferLoadNode* _load) final {
     BufferLoad load = Downcast<BufferLoad>(StmtExprMutator::VisitExpr_(_load));
     if (!load->buffer.same_as(inlined_buffer_)) {
-      return std::move(load);
+      return load;
     }
     return ReplaceInlinedBuffer(std::move(load));
   }
@@ -581,6 +581,30 @@ class ReverseComputeInliner : public BaseInliner {
     PrimExpr VisitExpr_(const BufferLoadNode* _load) final {
       BufferLoad load = Downcast<BufferLoad>(StmtExprMutator::VisitExpr_(_load));
       return load->buffer.same_as(self_->inlined_buffer_) ? self_->producer_rhs_ : load;
+    }
+
+    ReverseComputeInliner* self_;
+  };
+
+  class RecursionResolver : public StmtExprMutator {
+   public:
+    explicit RecursionResolver(ReverseComputeInliner* self) : self_(self) {}
+
+   private:
+    PrimExpr VisitExpr_(const VarNode* var) final {
+      auto it = self_->idx_sub_.find(var);
+      if (it == self_->idx_sub_.end()) {
+        return GetRef<Var>(var);
+      }
+      return (*it).second;
+    }
+
+    PrimExpr VisitExpr_(const BufferLoadNode* _load) final {
+      BufferLoad load = Downcast<BufferLoad>(StmtExprMutator::VisitExpr_(_load));
+      return load->buffer.same_as(self_->inlined_buffer_)
+                 ? StmtExprMutator::VisitExpr(
+                       BufferLoad(self_->inlined_store_->buffer, self_->inlined_store_->indices))
+                 : load;
     }
 
     ReverseComputeInliner* self_;
@@ -734,13 +758,13 @@ class ReverseComputeInliner : public BaseInliner {
       tgt_block_realize = BuildInlinedConsumerPredicate(tgt_block_realize);
       block_reuse.Set(src_block, tgt_block_realize->block);
     }
-    return std::move(tgt_block_realize);
+    return tgt_block_realize;
   }
 
   Stmt VisitStmt_(const BufferStoreNode* _store) final {
     BufferStore store = Downcast<BufferStore>(StmtExprMutator::VisitStmt_(_store));
     if (!store->buffer.same_as(inlined_buffer_)) {
-      return std::move(store);
+      return store;
     }
     return ReplaceInlinedBuffer(std::move(store));
   }
@@ -784,7 +808,9 @@ class ReverseComputeInliner : public BaseInliner {
   }
 
   Stmt ReplaceInlinedBuffer(BufferStore producer) {
-    producer_rhs_ = producer->value;
+    // "producer->value" may contain the buffer that is inlined in cases of reduction,
+    // so we need to resolve the recursion first
+    producer_rhs_ = RecursionResolver(this)(producer->value);
     return Substituter(this)(GetRef<BufferStore>(inlined_store_));
   }
 

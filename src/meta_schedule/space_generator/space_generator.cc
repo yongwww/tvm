@@ -16,6 +16,8 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+#include <tvm/ffi/reflection/registry.h>
+
 #include "../../target/parsers/aprofile.h"
 #include "../utils.h"
 
@@ -24,17 +26,15 @@ namespace meta_schedule {
 
 String GetRuleKindFromTarget(const Target& target) {
   if (target->kind->name == "llvm") {
-    static const PackedFunc* target_has_feature_fn_ptr =
-        runtime::Registry::Get("target.target_has_feature");
-    ICHECK(target_has_feature_fn_ptr != nullptr)
-        << "The `target.target_has_feature` func is not in tvm registry.";
-    bool have_avx512vnni = (*target_has_feature_fn_ptr)("avx512vnni", target);
-    bool have_avxvnni = (*target_has_feature_fn_ptr)("avxvnni", target);
+    static auto target_has_feature_fn_ptr =
+        tvm::ffi::Function::GetGlobalRequired("target.target_has_feature");
+    bool have_avx512vnni = target_has_feature_fn_ptr("avx512vnni", target).cast<bool>();
+    bool have_avxvnni = target_has_feature_fn_ptr("avxvnni", target).cast<bool>();
     if (have_avx512vnni || have_avxvnni) {
       return "vnni";
     } else {
-      bool have_avx512f = (*target_has_feature_fn_ptr)("avx512f", target);
-      bool have_avx512bw = (*target_has_feature_fn_ptr)("avx512bw", target);
+      bool have_avx512f = target_has_feature_fn_ptr("avx512f", target).cast<bool>();
+      bool have_avx512bw = target_has_feature_fn_ptr("avx512bw", target).cast<bool>();
       if (have_avx512bw && have_avx512f) {
         return "avx512";
       }
@@ -189,17 +189,21 @@ SpaceGenerator SpaceGenerator::PySpaceGenerator(
   return SpaceGenerator(n);
 }
 
-TVM_REGISTER_OBJECT_TYPE(SpaceGeneratorNode);
-TVM_REGISTER_NODE_TYPE(PySpaceGeneratorNode);
+TVM_FFI_STATIC_INIT_BLOCK({
+  SpaceGeneratorNode::RegisterReflection();
+  PySpaceGeneratorNode::RegisterReflection();
+});
 
-TVM_REGISTER_GLOBAL("meta_schedule.SpaceGeneratorInitializeWithTuneContext")
-    .set_body_method<SpaceGenerator>(&SpaceGeneratorNode::InitializeWithTuneContext);
-TVM_REGISTER_GLOBAL("meta_schedule.SpaceGeneratorGenerateDesignSpace")
-    .set_body_method<SpaceGenerator>(&SpaceGeneratorNode::GenerateDesignSpace);
-TVM_REGISTER_GLOBAL("meta_schedule.SpaceGeneratorPySpaceGenerator")
-    .set_body_typed(SpaceGenerator::PySpaceGenerator);
-TVM_REGISTER_GLOBAL("meta_schedule.SpaceGeneratorClone")
-    .set_body_method<SpaceGenerator>(&SpaceGeneratorNode::Clone);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef()
+      .def_method("meta_schedule.SpaceGeneratorInitializeWithTuneContext",
+                  &SpaceGeneratorNode::InitializeWithTuneContext)
+      .def_method("meta_schedule.SpaceGeneratorGenerateDesignSpace",
+                  &SpaceGeneratorNode::GenerateDesignSpace)
+      .def("meta_schedule.SpaceGeneratorPySpaceGenerator", SpaceGenerator::PySpaceGenerator)
+      .def_method("meta_schedule.SpaceGeneratorClone", &SpaceGeneratorNode::Clone);
+});
 
 }  // namespace meta_schedule
 }  // namespace tvm

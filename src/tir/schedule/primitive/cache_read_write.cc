@@ -80,7 +80,7 @@ struct CacheStageInfo {
   /*! \brief The map used for ScheduleStateNode::Replace. */
   Map<Block, Block> block_reuse;
   /*! \brief A set of blocks that will consume the new cache. */
-  std::unordered_set<StmtSRef, ObjectHash, ObjectEqual> consumer_blocks;
+  std::unordered_set<StmtSRef, ObjectPtrHash, ObjectPtrEqual> consumer_blocks;
   /*! \brief cache region for the buffer to be cached */
   BufferRegion cache_region;
 };
@@ -88,7 +88,7 @@ struct CacheStageInfo {
 /*! \brief Return the buffer region related with the buffer */
 Optional<BufferRegion> GetBufferRegionFromBuffer(const Array<BufferRegion>& buffer_regions,
                                                  const Buffer& buffer) {
-  Optional<BufferRegion> res = NullOpt;
+  Optional<BufferRegion> res = std::nullopt;
   for (const auto& region : buffer_regions) {
     if (region->buffer.same_as(buffer)) {
       ICHECK(!res.defined());
@@ -204,7 +204,7 @@ Block MakeReindexCacheStage(const BufferRegion& cache_region, ReindexCacheStageI
       /*body=*/
       BufferStore(info->write_buffer, BufferLoad(info->read_buffer, read_access_indices),
                   write_access_indices),
-      /*init=*/NullOpt,
+      /*init=*/std::nullopt,
       /*alloc_buffers=*/{},
       /*match_buffers=*/{},
       /*buf_doms=*/{});
@@ -304,7 +304,7 @@ Block MakeCacheStage(const BufferRegion& cache_region, CacheStageInfo* info,
       /*body=*/
       BufferStore(info->write_buffer, BufferLoad(info->read_buffer, read_access_indices),
                   write_access_indices),
-      /*init=*/NullOpt,
+      /*init=*/std::nullopt,
       /*alloc_buffers=*/{},
       /*match_buffers=*/{},
       /*annotations=*/{});
@@ -349,7 +349,7 @@ Block MakeReIndexStage(const Block& block, CacheStageInfo* info,
   // iters of the reindex block
   Array<IterVar> new_block_iters;
   // the substitution map from the original block iter to the iters of the reindex block
-  std::unordered_map<Var, Var, ObjectPtrHash, ObjectEqual> block_var_replace_map;
+  std::unordered_map<Var, Var, ObjectPtrHash, ObjectPtrEqual> block_var_replace_map;
   // indices to access the reindex buffer and the target buffer
   Array<PrimExpr> reindex_indices, target_indices;
 
@@ -503,7 +503,7 @@ Stmt InsertCacheStage(const Stmt& stmt, int pos, const Stmt& stage) {
  * \param scope_sref The scope block where the write is considered
  * \param buffer The queried buffer
  * \return The sref of the only writer of the input buffer in the given scope,
- *         or `NullOpt` if no block writes it in the scope.
+ *         or `std::nullopt` if no block writes it in the scope.
  * \throw NotSingleWriteBlock if there are more than one interested block.
  */
 Optional<StmtSRef> GetOnlyWriteBlock(ScheduleState self, const StmtSRef& scope_sref,
@@ -511,7 +511,7 @@ Optional<StmtSRef> GetOnlyWriteBlock(ScheduleState self, const StmtSRef& scope_s
   BlockScope scope = self->GetBlockScope(scope_sref);
   auto it = scope->buffer_writers.find(buffer);
   if (it == scope->buffer_writers.end()) {
-    return NullOpt;
+    return std::nullopt;
   } else {
     const Array<StmtSRef>& block_srefs = it->second;
     ICHECK(!block_srefs.empty());
@@ -934,7 +934,7 @@ class CacheReadRewriter : public StmtExprMutator {
     // We don't mutate the block which generates info->read_buffer.
     if (block != scope_sref_->stmt &&
         GetBufferRegionFromBuffer(block->writes, info_->read_buffer).defined()) {
-      return std::move(old_stmt);
+      return old_stmt;
     }
     // Mutate the body
     Block stmt = Downcast<Block>(StmtMutator::VisitStmt_(block));
@@ -970,7 +970,7 @@ class CacheReadRewriter : public StmtExprMutator {
       }
     }
     info_->block_reuse.Set(old_stmt, stmt);
-    return std::move(stmt);
+    return stmt;
   }
 
   Array<PrimExpr> RewriteIndices(const Array<PrimExpr>& indices) {
@@ -986,7 +986,7 @@ class CacheReadRewriter : public StmtExprMutator {
       ObjectPtr<BufferLoadNode> n = make_object<BufferLoadNode>(*load);
       n->buffer = info_->write_buffer;
       if (!cache_full_region_) {
-        n->indices = std::move(RewriteIndices(load->indices));
+        n->indices = RewriteIndices(load->indices);
       }
       return PrimExpr(n);
     }
@@ -1194,15 +1194,15 @@ class CacheWriteRewriter : public StmtExprMutator {
           n->body = VisitStmt(block->body);
           Block new_consumer = Block(n);
           info_->block_reuse.Set(old_stmt, new_consumer);
-          return std::move(new_consumer);
+          return new_consumer;
         }
-        return std::move(old_stmt);
+        return old_stmt;
       }
     }
 
     // We only mutate the block which generates info->write_buffer
     if (block != writer_block_sref_->stmt && block != scope_sref_->stmt && !under_writer_block_) {
-      return std::move(old_stmt);
+      return old_stmt;
     }
 
     // Mutate the body
@@ -1240,7 +1240,7 @@ class CacheWriteRewriter : public StmtExprMutator {
       }
     }
     info_->block_reuse.Set(old_stmt, stmt);
-    return std::move(stmt);
+    return stmt;
   }
 
   Array<PrimExpr> RewriteIndices(const Array<PrimExpr>& indices) {
@@ -1257,11 +1257,11 @@ class CacheWriteRewriter : public StmtExprMutator {
       auto n = CopyOnWrite(stmt.get());
       n->buffer = info_->read_buffer;
       if (!cache_full_region_) {
-        n->indices = std::move(RewriteIndices(n->indices));
+        n->indices = RewriteIndices(n->indices);
       }
       return Stmt(n);
     } else {
-      return std::move(stmt);
+      return stmt;
     }
   }
 
@@ -1270,7 +1270,7 @@ class CacheWriteRewriter : public StmtExprMutator {
       ObjectPtr<BufferLoadNode> n = make_object<BufferLoadNode>(*load);
       n->buffer = info_->read_buffer;
       if (!cache_full_region_) {
-        n->indices = std::move(RewriteIndices(n->indices));
+        n->indices = RewriteIndices(n->indices);
       }
       return PrimExpr(n);
     }
@@ -1371,7 +1371,7 @@ class ReindexCacheWriteRewriter : public CacheWriteRewriter {
       n->indices = new_indices_;
       return Stmt(n);
     } else {
-      return std::move(stmt);
+      return stmt;
     }
   }
 
@@ -1565,7 +1565,7 @@ class ReIndexRewriter : public StmtExprMutator {
       n->alloc_buffers.push_back(info_->alloc.value());
       stmt = Block(n);
       info_->block_reuse.Set(old_stmt, stmt);
-      return std::move(stmt);
+      return stmt;
     }
 
     // Visiting the blokc being reindexed
@@ -1594,9 +1594,9 @@ class ReIndexRewriter : public StmtExprMutator {
         stmt = Block(n);
       }
       info_->block_reuse.Set(old_stmt, stmt);
-      return std::move(stmt);
+      return stmt;
     }
-    return std::move(old_stmt);
+    return old_stmt;
   }
 
   template <typename Node>
@@ -2208,7 +2208,7 @@ Array<StmtSRef> CacheInplace(ScheduleState self, const StmtSRef& block_sref, int
   // Create the corresponding buffer to be written, i.e. result of cache_write
   info.write_buffer = buffer;
   // Create the corresponding buffer allocation
-  info.alloc = nullptr;
+  info.alloc = std::nullopt;
   info.consumer_blocks.clear();
 
   // Cache write step 1. Detect insert position
@@ -2425,7 +2425,7 @@ struct ReIndexTraits : public UnpackedInstTraits<ReIndexTraits> {
     std::ostringstream os;
     os << "(\"" << BufferIndexType2Str(static_cast<BufferIndexType>(buffer_index_type->value))
        << "\", " << buffer_index << ")";
-    py.Input("buffer", os.str());
+    py.Input("buffer", String(os.str()));
     py.SingleOutput(outputs);
     return py.Str();
   }

@@ -32,10 +32,10 @@
 #endif
 #include <llvm/Support/CodeGen.h>
 #include <llvm/Target/TargetOptions.h>
+#include <tvm/ffi/container/array.h>
+#include <tvm/ffi/optional.h>
+#include <tvm/ffi/string.h>
 #include <tvm/ir/expr.h>
-#include <tvm/runtime/container/array.h>
-#include <tvm/runtime/container/optional.h>
-#include <tvm/runtime/container/string.h>
 #include <tvm/target/target.h>
 
 #include <algorithm>
@@ -49,6 +49,21 @@
 #define llvmGetPointerTo(arg, offset) (llvm::PointerType::get((arg), (offset)))
 #else
 #define llvmGetPointerTo(arg, offset) (arg->getPointerTo(offset))
+#endif
+
+#if TVM_LLVM_VERSION >= 130
+#define llvmGetIntrinName(id) \
+  std::string(llvm::Intrinsic::getBaseName(static_cast<llvm::Intrinsic::ID>(id)))
+#elif TVM_LLVM_VERSION >= 40
+// This is the version of Intrinsic::getName that works for overloaded
+// intrinsics. Helpfully, if we provide no types to this function, it
+// will give us the overloaded name without the types appended. This
+// should be enough information for most uses.
+#define llvmGetIntrinName(id) \
+  std::string(llvm::Intrinsic::getName(static_cast<llvm::Intrinsic::ID>(id), {}))
+#else
+// Nothing to do, just return the intrinsic id number
+#define llvmGetIntrinName(id) std::to_string(id)
 #endif
 
 namespace llvm {
@@ -243,6 +258,11 @@ class LLVMTargetInfo {
    */
   const std::string GetJITEngine() const { return jit_engine_; }
   /*!
+   * \brief Get the TVM & LLVM vector_width
+   * \return number of bits for vector width
+   */
+  const int GetVectorWidth();
+  /*!
    * \brief Get the LLVM optimization level
    * \return optimization level for this target
    */
@@ -356,6 +376,7 @@ class LLVMTargetInfo {
   llvm::CodeModel::Model code_model_ = llvm::CodeModel::Small;
   std::shared_ptr<llvm::TargetMachine> target_machine_;
   std::string jit_engine_ = "orcjit";
+  int vector_width_{0};
 };
 
 /*!

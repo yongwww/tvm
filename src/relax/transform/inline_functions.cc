@@ -17,6 +17,7 @@
  * under the License.
  */
 
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/analysis.h>
 #include <tvm/relax/expr.h>
 #include <tvm/relax/expr_functor.h>
@@ -75,7 +76,7 @@ class FunctionInliner : public ExprMutator {
       }
     }
 
-    return std::move(node);
+    return node;
   }
 
  private:
@@ -85,7 +86,7 @@ class FunctionInliner : public ExprMutator {
     } else if (auto opt = replacements_.Get(gvar->name_hint)) {
       return opt;
     } else {
-      return NullOpt;
+      return std::nullopt;
     }
   }
 
@@ -138,7 +139,7 @@ class FunctionInliner : public ExprMutator {
   }
 
   const Map<Variant<String, GlobalVar>, Function>& replacements_;
-  support::OrderedSet<GlobalVar> inline_stack_;
+  std::unordered_set<GlobalVar, ObjectPtrHash, ObjectPtrEqual> inline_stack_;
 };
 }  // namespace
 
@@ -164,7 +165,10 @@ Function FunctionInlineFunctions(Function func,
   return Downcast<Function>(mutator(std::move(func)));
 }
 
-TVM_REGISTER_GLOBAL("relax.FunctionInlineFunctions").set_body_typed(FunctionInlineFunctions);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.FunctionInlineFunctions", FunctionInlineFunctions);
+});
 
 namespace transform {
 
@@ -174,7 +178,7 @@ Pass InlinePrivateFunctions() {
     for (const auto& [gvar, base_func] : mod->functions) {
       if (auto opt = base_func.as<relax::Function>()) {
         auto func = opt.value();
-        bool is_private = !func->GetAttr<String>(tvm::attr::kGlobalSymbol).defined();
+        bool is_private = !func->GetAttr<String>(tvm::attr::kGlobalSymbol).has_value();
         if (is_private) {
           replacements.Set(gvar, func);
         }
@@ -219,8 +223,10 @@ Pass InlinePrivateFunctions() {
   return tvm::transform::CreateModulePass(pass_func, 0, "InlinePrivateFunctions", {});
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.InlinePrivateFunctions")
-    .set_body_typed(InlinePrivateFunctions);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.transform.InlinePrivateFunctions", InlinePrivateFunctions);
+});
 
 }  // namespace transform
 

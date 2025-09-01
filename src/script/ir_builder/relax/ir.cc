@@ -16,6 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/analysis.h>
 #include <tvm/relax/struct_info.h>
 #include <tvm/script/ir_builder/relax/ir.h>
@@ -55,7 +56,7 @@ TVM_STATIC_IR_FUNCTOR(Namer, vtable)
 FunctionFrame Function(const Bool& is_pure, const Bool& is_private) {
   ObjectPtr<FunctionFrameNode> n = make_object<FunctionFrameNode>();
   const IRBuilder& ir_builder = IRBuilder::Current();
-  Optional<tvm::IRModule> mod = NullOpt;
+  Optional<tvm::IRModule> mod = std::nullopt;
   if (const Optional<ir::IRModuleFrame> mod_frame = ir_builder->GetLastFrame<ir::IRModuleFrame>()) {
     mod = tvm::IRModule(mod_frame.value()->functions);
   }
@@ -77,14 +78,14 @@ tvm::relax::Var Arg(const String& name, const tvm::relax::StructInfo& struct_inf
 
 void FuncName(const String& name) {
   FunctionFrame frame = FindFunctionFrame("R.func_name");
-  if (frame->name.defined()) {
+  if (frame->name.has_value()) {
     LOG(FATAL) << "ValueError: Duplicate function name, previous one is: \"" << frame->name.value()
                << "\"";
   }
   frame->name = name;
 }
 
-void FuncAttrs(Map<String, ObjectRef> attrs) {
+void FuncAttrs(Map<String, ffi::Any> attrs) {
   FunctionFrame frame = FindFunctionFrame("R.func_attr");
   for (const auto& [key, value] : attrs) {
     if (key == tvm::attr::kGlobalSymbol && frame->is_private.value_or(Bool(false))->value) {
@@ -144,12 +145,16 @@ void FuncRetValue(const tvm::relax::Expr& value) {
   frame->output = std::move(normalized_value);
 }
 
-TVM_REGISTER_GLOBAL("script.ir_builder.relax.Function").set_body_typed(Function);
-TVM_REGISTER_GLOBAL("script.ir_builder.relax.Arg").set_body_typed(Arg);
-TVM_REGISTER_GLOBAL("script.ir_builder.relax.FuncName").set_body_typed(FuncName);
-TVM_REGISTER_GLOBAL("script.ir_builder.relax.FuncAttrs").set_body_typed(FuncAttrs);
-TVM_REGISTER_GLOBAL("script.ir_builder.relax.FuncRetStructInfo").set_body_typed(FuncRetStructInfo);
-TVM_REGISTER_GLOBAL("script.ir_builder.relax.FuncRetValue").set_body_typed(FuncRetValue);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef()
+      .def("script.ir_builder.relax.Function", Function)
+      .def("script.ir_builder.relax.Arg", Arg)
+      .def("script.ir_builder.relax.FuncName", FuncName)
+      .def("script.ir_builder.relax.FuncAttrs", FuncAttrs)
+      .def("script.ir_builder.relax.FuncRetStructInfo", FuncRetStructInfo)
+      .def("script.ir_builder.relax.FuncRetValue", FuncRetValue);
+});
 
 ///////////////////////////// BindingBlock //////////////////////////////
 
@@ -191,10 +196,13 @@ void DataflowBlockOutput(const Array<tvm::relax::Var>& vars) {
   }
 }
 
-TVM_REGISTER_GLOBAL("script.ir_builder.relax.Dataflow").set_body_typed(Dataflow);
-TVM_REGISTER_GLOBAL("script.ir_builder.relax.BindingBlock").set_body_typed(BindingBlock);
-TVM_REGISTER_GLOBAL("script.ir_builder.relax.DataflowBlockOutput")
-    .set_body_typed(DataflowBlockOutput);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef()
+      .def("script.ir_builder.relax.Dataflow", Dataflow)
+      .def("script.ir_builder.relax.BindingBlock", BindingBlock)
+      .def("script.ir_builder.relax.DataflowBlockOutput", DataflowBlockOutput);
+});
 
 /////////////////////////////// Bindings ///////////////////////////////
 
@@ -236,9 +244,13 @@ tvm::relax::Var EmitVarBinding(const tvm::relax::VarBinding& binding) {
   return binding->var;
 }
 
-TVM_REGISTER_GLOBAL("script.ir_builder.relax.Emit").set_body_typed(Emit);
-TVM_REGISTER_GLOBAL("script.ir_builder.relax.EmitMatchCast").set_body_typed(EmitMatchCast);
-TVM_REGISTER_GLOBAL("script.ir_builder.relax.EmitVarBinding").set_body_typed(EmitVarBinding);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef()
+      .def("script.ir_builder.relax.Emit", Emit)
+      .def("script.ir_builder.relax.EmitMatchCast", EmitMatchCast)
+      .def("script.ir_builder.relax.EmitVarBinding", EmitVarBinding);
+});
 
 /////////////////////////////// SeqExpr ///////////////////////////////
 
@@ -247,15 +259,18 @@ SeqExprFrame SeqExpr() {
   return SeqExprFrame(n);
 }
 
-TVM_REGISTER_GLOBAL("script.ir_builder.relax.SeqExpr").set_body_typed(SeqExpr);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("script.ir_builder.relax.SeqExpr", SeqExpr);
+});
 
 ///////////////////////////// If Then Else /////////////////////////////
 
 IfFrame If(tvm::relax::Expr condition) {
   ObjectPtr<IfFrameNode> n = make_object<IfFrameNode>();
   n->condition = condition;
-  n->then_expr = NullOpt;
-  n->else_expr = NullOpt;
+  n->then_expr = std::nullopt;
+  n->else_expr = std::nullopt;
   return IfFrame(n);
 }
 
@@ -269,9 +284,13 @@ ElseFrame Else() {
   return ElseFrame(n);
 }
 
-TVM_REGISTER_GLOBAL("script.ir_builder.relax.If").set_body_typed(If);
-TVM_REGISTER_GLOBAL("script.ir_builder.relax.Then").set_body_typed(Then);
-TVM_REGISTER_GLOBAL("script.ir_builder.relax.Else").set_body_typed(Else);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef()
+      .def("script.ir_builder.relax.If", If)
+      .def("script.ir_builder.relax.Then", Then)
+      .def("script.ir_builder.relax.Else", Else);
+});
 
 }  // namespace relax
 }  // namespace ir_builder

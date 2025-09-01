@@ -24,6 +24,7 @@
  *        Ideally should be used before constant folding and eliminating unused bindings.
  */
 
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/analysis.h>
 #include <tvm/relax/expr.h>
 #include <tvm/relax/expr_functor.h>
@@ -122,7 +123,7 @@ class SymbolicVarCanonicalizer : public ExprMutator {
       if (auto it = known_values_.find(var); it != known_values_.end()) {
         return it->second.expr;
       } else {
-        return NullOpt;
+        return std::nullopt;
       }
     });
     if (output.same_as(expr)) {
@@ -301,22 +302,22 @@ class CanonicalizePlanner : public ExprVisitor {
     auto earlier_tuple = [&]() -> Optional<Expr> {
       auto expr_tuple = expr.as<TupleNode>();
       if (!expr_tuple) {
-        return NullOpt;
+        return std::nullopt;
       }
 
       if (expr_tuple->fields.empty()) {
-        return NullOpt;
+        return std::nullopt;
       }
 
       auto first_element = recursively_unwrap_var(expr_tuple->fields[0]).as<TupleGetItemNode>();
       if (!first_element) {
-        return NullOpt;
+        return std::nullopt;
       }
 
       auto earlier_tuple_size =
           Downcast<TupleStructInfo>(GetStructInfo(first_element->tuple))->fields.size();
       if (earlier_tuple_size != expr_tuple->fields.size()) {
-        return NullOpt;
+        return std::nullopt;
       }
 
       Expr earlier_tuple = recursively_unwrap_var(first_element->tuple);
@@ -324,16 +325,16 @@ class CanonicalizePlanner : public ExprVisitor {
       for (size_t i = 0; i < expr_tuple->fields.size(); i++) {
         auto element = recursively_unwrap_var(expr_tuple->fields[i]).as<TupleGetItemNode>();
         if (!element) {
-          return NullOpt;
+          return std::nullopt;
         }
         if (static_cast<size_t>(element->index) != i) {
-          return NullOpt;
+          return std::nullopt;
         }
 
         auto source_of_element = recursively_unwrap_var(element->tuple);
 
         if (!earlier_tuple.same_as(source_of_element)) {
-          return NullOpt;
+          return std::nullopt;
         }
       }
 
@@ -343,7 +344,7 @@ class CanonicalizePlanner : public ExprVisitor {
       return earlier_tuple.value();
     }
 
-    return NullOpt;
+    return std::nullopt;
   }
 
   void VisitBinding(const Binding& binding) override {
@@ -591,7 +592,10 @@ Pass CanonicalizeBindings() {
       "CanonicalizeBindings");
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.CanonicalizeBindings").set_body_typed(CanonicalizeBindings);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.transform.CanonicalizeBindings", CanonicalizeBindings);
+});
 
 }  // namespace transform
 

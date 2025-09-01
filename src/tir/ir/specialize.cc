@@ -21,7 +21,8 @@
  * \file src/tir/ir/specialize.cc
  * \brief Specialize parameters of PrimFunc.
  */
-#include <tvm/runtime/registry.h>
+#include <tvm/ffi/function.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/tir/analysis.h>
 #include <tvm/tir/function.h>
 #include <tvm/tir/op.h>
@@ -418,15 +419,13 @@ PrimFunc Specialize(PrimFunc func, const Map<Var, Variant<Buffer, PrimExpr>>& pa
   VarMap var_map;
   for (const auto& kv : param_map) {
     const Var& param = kv.first;
-    const ObjectRef& instance = kv.second;
-    if (instance->IsInstance<BufferNode>()) {
-      UpdateSpecializeVarMap(func, param, Downcast<Buffer>(instance), &var_map);
-    } else if (instance->IsInstance<PrimExprNode>()) {
-      UpdateSpecializeVarMap(func, param, Downcast<PrimExpr>(instance), &var_map);
+    const Variant<Buffer, PrimExpr>& instance = kv.second;
+    if (auto opt_buffer = instance.as<Buffer>()) {
+      UpdateSpecializeVarMap(func, param, opt_buffer.value(), &var_map);
+    } else if (auto opt_expr = instance.as<PrimExpr>()) {
+      UpdateSpecializeVarMap(func, param, opt_expr.value(), &var_map);
     } else {
-      CHECK(instance.defined()) << "Specialize instance is not defined for param " << param;
-      LOG(FATAL) << "TypeError: specialize expected instance to be Buffer or PrimExpr, but got "
-                 << instance->GetTypeKey();
+      LOG(FATAL) << "TypeError: specialize expected instance to be Buffer or PrimExpr";
     }
   }
   return PrimFuncSpecializer::Specialize(func, std::move(var_map));
@@ -434,7 +433,10 @@ PrimFunc Specialize(PrimFunc func, const Map<Var, Variant<Buffer, PrimExpr>>& pa
 
 /**************** FFI ****************/
 
-TVM_REGISTER_GLOBAL("tir.Specialize").set_body_typed(Specialize);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("tir.Specialize", Specialize);
+});
 
 }  // namespace tir
 }  // namespace tvm

@@ -22,7 +22,8 @@
  */
 // Loop vectorizer as in Halide pipeline.
 #include <tvm/arith/analyzer.h>
-#include <tvm/runtime/registry.h>
+#include <tvm/ffi/function.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/tir/analysis.h>
 #include <tvm/tir/builtin.h>
 #include <tvm/tir/expr.h>
@@ -80,8 +81,8 @@ bool EnableBufferLevelPredication(Target target) {
     return enable_buffer_predication.value();
   }
 
-  // Use buffer-level predication by default for AArch64 SVE targets
-  return arith::TargetHasSVE(target);
+  // Use buffer-level predication by default for VLA targets
+  return arith::TargetHasVLA(target);
 }
 
 /*!
@@ -236,7 +237,7 @@ class VecAllocAccess : public StmtExprMutator {
       shape.Set(shape.size() - 1, analyzer_.Simplify(shape[shape.size() - 1] * var_lanes_));
 
       // TODO(Lunderberg): Move this pass to be prior to
-      // StorageFlatten/FlattenBuffer, implement by appending a
+      // FlattenBuffer, implement by appending a
       // dimension to the buffer.  Since it is currently after the
       // flattening, the strides are not technically necessary, but
       // are updated for consistency.
@@ -464,7 +465,7 @@ class Vectorizer : public StmtMutator, public ExprFunctor<PrimExpr(const PrimExp
     if (it != let_binding_.end()) {
       return it->second;
     } else {
-      return std::move(var);
+      return var;
     }
   }
   // IfThenElse expr
@@ -503,7 +504,11 @@ class Vectorizer : public StmtMutator, public ExprFunctor<PrimExpr(const PrimExp
       if (value.dtype().is_scalable_vector()) {
         return Call(op->dtype.with_scalable_vscale_factor(lanes), op->op, {value});
       } else {
-        return Call(op->dtype.with_lanes(lanes), op->op, {value});
+        int new_lanes = (op->dtype != DataType::Float4E2M1FN() &&
+                         op->args[0].dtype() != DataType::Float4E2M1FN())
+                            ? (value.dtype().bits() * value.dtype().lanes()) / op->dtype.bits()
+                            : value.dtype().lanes();
+        return Call(op->dtype.with_lanes(new_lanes), op->op, {value});
       }
     }
   }
@@ -553,20 +558,16 @@ class Vectorizer : public StmtMutator, public ExprFunctor<PrimExpr(const PrimExp
       Array<PrimExpr> new_args;
       if (op->op.same_as(builtin::call_llvm_pure_intrin())) {
         // op->args[1], will give us total number of arguments to intrinsic
-        int num_signature = Downcast<IntImm>(op->args[1])->value;
         Array<PrimExpr> op_expr_args;
-        for (int i = 0; i < num_signature; i++) {
+        for (size_t i = 1; i < op->args.size(); ++i) {
           // Collect all intrinsic arguments
-          op_expr_args.push_back(op->args[i + 2]);
+          op_expr_args.push_back(op->args[i]);
         }
         // Generate RAMP nodes for intrinsic arguments
         Array<PrimExpr> updated_args = MutateArray(op_expr_args, &lane);
-        // Collect Intrinsic ID and no. of argument
-        for (int i = 0; i < 2; i++) {
-          new_args.push_back(op->args[i]);
-        }
+        new_args.push_back(op->args[0]);
         // Collect updated intrinsic arguments
-        for (int i = 0; i < num_signature; i++) {
+        for (size_t i = 0; i < updated_args.size(); ++i) {
           new_args.push_back(updated_args[i]);
         }
       } else {
@@ -593,7 +594,7 @@ class Vectorizer : public StmtMutator, public ExprFunctor<PrimExpr(const PrimExp
       writer->LegalizeDType();
     }
 
-    return std::move(load);
+    return load;
   }
   // Let
   PrimExpr VisitExpr_(const LetNode* op) final {
@@ -622,6 +623,68 @@ class Vectorizer : public StmtMutator, public ExprFunctor<PrimExpr(const PrimExp
       } else {
         return Let(op->var, value, body);
       }
+    }
+  }
+  PrimExpr VisitExpr_(const ShuffleNode* op) final {
+    CHECK(op->vectors.size() == 1 && op->indices.size() == 1)
+        << "Cannot vectorize ShuffleNode with multiple vectors or indices: the vector size is "
+        << op->vectors.size() << " and the index size is " << op->indices.size();
+    int lane_vectors = 0;
+    int lane_indices = 0;
+    Array<PrimExpr> vectors = MutateArray(op->vectors, &lane_vectors);
+    Array<PrimExpr> indices = MutateArray(op->indices, &lane_indices);
+    if (vectors.same_as(op->vectors) && indices.same_as(op->indices)) {
+      return GetRef<PrimExpr>(op);
+    }
+
+    int new_vec_length = Downcast<IntImm>(var_lanes_)->value / op->vectors[0].dtype().lanes();
+    PrimExpr updated_index = indices[0];
+    // Check that the indices satisfy the specific patterns.
+    auto f_check_index = [this, op](const PrimExpr& index) {
+      // Allowing Ramp(0, 1, var_lanes_)
+      if (const auto* ramp = index.as<RampNode>()) {
+        if (ramp->base->IsInstance<IntImmNode>() && Downcast<IntImm>(ramp->base)->value == 0 &&
+            ramp->stride->IsInstance<IntImmNode>() && Downcast<IntImm>(ramp->stride)->value == 1 &&
+            ramp->lanes->IsInstance<IntImmNode>() &&
+            Downcast<IntImm>(ramp->lanes)->value == Downcast<IntImm>(var_lanes_)->value) {
+          return true;
+        }
+      }
+      // Allowing FloorMod(Ramp(0, 1, var_lanes_), Broadcast(op->vectors[0]->lanes, var_lanes_))
+      if (const auto* floordiv = index.as<FloorModNode>()) {
+        if (const auto* ramp = floordiv->a.as<RampNode>()) {
+          if (const auto* broadcast = floordiv->b.as<BroadcastNode>()) {
+            if (ramp->base->IsInstance<IntImmNode>() && Downcast<IntImm>(ramp->base)->value == 0 &&
+                ramp->stride->IsInstance<IntImmNode>() &&
+                Downcast<IntImm>(ramp->stride)->value == 1 &&
+                ramp->lanes->IsInstance<IntImmNode>() &&
+                Downcast<IntImm>(ramp->lanes)->value == Downcast<IntImm>(var_lanes_)->value &&
+                broadcast->value->IsInstance<IntImmNode>() &&
+                Downcast<IntImm>(broadcast->value)->value == op->vectors[0]->dtype.lanes() &&
+                broadcast->lanes->IsInstance<IntImmNode>() &&
+                Downcast<IntImm>(broadcast->lanes)->value == Downcast<IntImm>(var_lanes_)->value) {
+              return true;
+            }
+          }
+        }
+      }
+
+      return false;
+    };
+    CHECK(f_check_index(updated_index));
+
+    if (new_vec_length == 1) {
+      return tir::Substitute(op->vectors[0], {{var_, tvm::IntImm(var_->dtype, 0)}});
+    } else {
+      PrimExpr prev_ramp = ramp_;
+      PrimExpr prev_var_lanes = var_lanes_;
+      ramp_ = Ramp(IntImm(var_->dtype, 0), IntImm(var_->dtype, 2), new_vec_length);
+      var_lanes_ = tvm::IntImm(var_lanes_.dtype(), new_vec_length);
+      lane_vectors = 0;
+      vectors = MutateArray(op->vectors, &lane_vectors);
+      ramp_ = prev_ramp;
+      var_lanes_ = prev_var_lanes;
+      return vectors[0];
     }
   }
   // BufferStore
@@ -672,7 +735,7 @@ class Vectorizer : public StmtMutator, public ExprFunctor<PrimExpr(const PrimExp
       writer->value = BroadcastTo(value, total_lanes, is_last_index_scalable);
     }
 
-    return std::move(store);
+    return store;
   }
   // For
   Stmt VisitStmt_(const ForNode* op) final {
@@ -703,7 +766,7 @@ class Vectorizer : public StmtMutator, public ExprFunctor<PrimExpr(const PrimExp
     // temp clear need_scalarize flag, so VisitStmt
     // won't trigger an ICHECK eror
     Stmt then_case = this->VisitStmt(op->then_case);
-    Optional<Stmt> else_case = NullOpt;
+    Optional<Stmt> else_case = std::nullopt;
     if (op->else_case) {
       else_case = this->VisitStmt(op->else_case.value());
     }
@@ -780,7 +843,7 @@ class Vectorizer : public StmtMutator, public ExprFunctor<PrimExpr(const PrimExp
     }
 
     // TODO(Lunderberg): Move this pass to be prior to
-    // StorageFlatten/FlattenBuffer.  That will allow this pass to be
+    // FlattenBuffer.  That will allow this pass to be
     // implemented as adding a new buffer dimension, which is later
     // flattened.
 
@@ -800,10 +863,6 @@ class Vectorizer : public StmtMutator, public ExprFunctor<PrimExpr(const PrimExp
     Var idx(var_->name_hint + ".s", var_->dtype);
     stmt = Substitute(stmt, {{var_, idx}});
     return For(idx, IntImm(var_->dtype, 0), var_lanes_, ForKind::kSerial, stmt);
-  }
-  // ProducerStore
-  Stmt VisitStmt_(const ProducerStoreNode* op) final {
-    LOG(FATAL) << "ProducerProvide cannot appear in a TIR PrimFunc";
   }
 
  private:
@@ -906,7 +965,7 @@ class LoopVectorizer : public StmtMutator {
 
       if (!extent_as_int || extent_as_int->value < 1) {
         bool is_scalable_expr = CheckContains::ExprContains(op->extent, arith::IsVScaleCall);
-        ICHECK(is_scalable_expr && arith::TargetHasSVE(target_))
+        ICHECK(is_scalable_expr && arith::TargetHasVLA(target_))
             << "Failed to vectorize loop with extent " << op->extent << " for target " << target_;
       }
       ICHECK(is_zero(op->min));
@@ -962,7 +1021,10 @@ Pass VectorizeLoop(bool enable_vectorize) {
   return CreatePrimFuncPass(pass_func, 0, "tir.VectorizeLoop", {});
 }
 
-TVM_REGISTER_GLOBAL("tir.transform.VectorizeLoop").set_body_typed(VectorizeLoop);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("tir.transform.VectorizeLoop", VectorizeLoop);
+});
 
 }  // namespace transform
 

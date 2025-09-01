@@ -25,6 +25,7 @@
 #ifndef TVM_RELAX_TIR_PATTERN_H_
 #define TVM_RELAX_TIR_PATTERN_H_
 
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/tir/function.h>
 
 namespace tvm {
@@ -43,11 +44,15 @@ class MatchResultNode : public Object {
   Array<PrimExpr> symbol_values;
   /*! \brief The matched buffers of input and output. */
   Array<tir::Buffer> matched_buffers;
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("pattern", &pattern);
-    v->Visit("symbol_values", &symbol_values);
-    v->Visit("matched_buffers", &matched_buffers);
+
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<MatchResultNode>()
+        .def_ro("pattern", &MatchResultNode::pattern)
+        .def_ro("symbol_values", &MatchResultNode::symbol_values)
+        .def_ro("matched_buffers", &MatchResultNode::matched_buffers);
   }
+
   static constexpr const char* _type_key = "relax.MatchResult";
   TVM_DECLARE_FINAL_OBJECT_INFO(MatchResultNode, Object);
 };
@@ -66,10 +71,10 @@ class MatchResult : public ObjectRef {
   TVM_DLL explicit MatchResult(TIRPattern pattern, Array<PrimExpr> symbol_values,
                                Array<tir::Buffer> matched_buffers);
 
-  TVM_DEFINE_OBJECT_REF_METHODS(MatchResult, ObjectRef, MatchResultNode)
+  TVM_DEFINE_OBJECT_REF_METHODS(MatchResult, ObjectRef, MatchResultNode);
 };
 
-using FCodegen = runtime::TypedPackedFunc<Array<ObjectRef>(Array<MatchResult> match_results)>;
+using FCodegen = ffi::TypedFunction<Array<ffi::Any>(Array<MatchResult> match_results)>;
 }  // namespace relax
 }  // namespace tvm
 #endif  // TVM_RELAX_TIR_PATTERN_H_

@@ -16,6 +16,8 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+#include <tvm/ffi/reflection/registry.h>
+
 #include "../utils.h"
 
 namespace tvm {
@@ -27,12 +29,11 @@ class RemoveBuildArtifactNode : public MeasureCallbackNode {
              const Array<MeasureCandidate>& measure_candidates,
              const Array<BuilderResult>& builder_results,
              const Array<RunnerResult>& runner_results) final {
-    static const PackedFunc* f_rm = runtime::Registry::Get("meta_schedule.remove_build_dir");
-    ICHECK(f_rm != nullptr) << "The `remove_build_dir` func is not in tvm registry.";
+    static auto f_rm = tvm::ffi::Function::GetGlobalRequired("meta_schedule.remove_build_dir");
     auto _ = Profiler::TimedScope("MeasureCallback/RemoveBuildArtifact");
     for (const BuilderResult& build_result : builder_results) {
       if (Optional<String> path = build_result->artifact_path) {
-        (*f_rm)(path.value());
+        f_rm(path.value());
       }
     }
   }
@@ -46,9 +47,11 @@ MeasureCallback MeasureCallback::RemoveBuildArtifact() {
   return MeasureCallback(n);
 }
 
-TVM_REGISTER_NODE_TYPE(RemoveBuildArtifactNode);
-TVM_REGISTER_GLOBAL("meta_schedule.MeasureCallbackRemoveBuildArtifact")
-    .set_body_typed(MeasureCallback::RemoveBuildArtifact);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("meta_schedule.MeasureCallbackRemoveBuildArtifact",
+                        MeasureCallback::RemoveBuildArtifact);
+});
 
 }  // namespace meta_schedule
 }  // namespace tvm

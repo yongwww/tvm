@@ -191,7 +191,7 @@ class RollingBufferInfoCollector {
         stride = 1;
       } else if (is_const_int(bound->min)) {
         // If the bound is an int, we can't roll over it
-        iter_var = NullOpt;
+        iter_var = std::nullopt;
       } else {
         // If all of the above matches fail, we're in unknown behaviour
         return false;
@@ -202,9 +202,9 @@ class RollingBufferInfoCollector {
         bound_overlap = extent - stride;
         // Since Pass CompactBufferAllocation will be responsible for compacting the buffer
         // allocation region, there is no need to roll over the axis where the overlap is not
-        // positive, so reset iter_var to NullOpt.
+        // positive, so reset iter_var to std::nullopt.
         if (bound_overlap <= 0) {
-          iter_var = NullOpt;
+          iter_var = std::nullopt;
         }
       }
       bound_iter_vars.push_back(iter_var);
@@ -215,7 +215,7 @@ class RollingBufferInfoCollector {
     // Pick the outermost iter_var that's mentioned in the bounds
     // to be the rolling axis
     Optional<Var> roll_iter_var;
-    int roll_axis;
+    int roll_axis = 0;
     for (const tir::StmtSRef& loop_sref : loop_srefs) {
       auto loop_var = loop_sref->StmtAs<ForNode>()->loop_var;
 
@@ -331,7 +331,7 @@ class RollingBufferRewriter : public StmtExprMutator {
       RewriteAccessRegion(&n->writes, infered_access_regions[1]);
     }
     info_->block_reuse.Set(old_stmt, stmt);
-    return std::move(stmt);
+    return stmt;
   }
 
   Stmt VisitStmt_(const BlockRealizeNode* realize) final {
@@ -355,7 +355,7 @@ class RollingBufferRewriter : public StmtExprMutator {
       BlockRealizeNode* n = stmt.CopyOnWrite();
       n->predicate = condition;
     }
-    return std::move(stmt);
+    return stmt;
   }
 
   Stmt VisitStmt_(const BufferStoreNode* op) final {
@@ -366,7 +366,7 @@ class RollingBufferRewriter : public StmtExprMutator {
       // Need to add predicate to the current block to avoid recomputing elements.
       rewrite_block_predicate_ = true;
     }
-    return std::move(stmt);
+    return stmt;
   }
 
   PrimExpr VisitExpr_(const BufferLoadNode* op) final {
@@ -375,7 +375,7 @@ class RollingBufferRewriter : public StmtExprMutator {
       BufferLoadNode* n = stmt.CopyOnWrite();
       RewriteBufferAccess(&n->buffer, &n->indices);
     }
-    return std::move(stmt);
+    return stmt;
   }
 
  private:

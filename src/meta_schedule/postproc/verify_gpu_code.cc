@@ -16,6 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/tir/transform.h>
 
 #include "../utils.h"
@@ -31,7 +32,7 @@ class ThreadExtentChecker : private StmtVisitor {
       ThreadExtentChecker checker(thread_warp_size);
       checker.VisitStmt(stmt);
       return true;
-    } catch (const dmlc::Error& e) {
+    } catch (const std::exception&) {
       return false;
     }
   }
@@ -153,10 +154,6 @@ class VerifyGPUCodeNode : public PostprocNode {
         try {
           auto pass_list = Array<tvm::transform::Pass>();
           // Phase 1
-          // First three passes are not needed in TIR schedule.
-          // pass_list.push_back(tir::transform::InjectPrefetch());
-          // pass_list.push_back(tir::transform::TextureFlatten());
-          // pass_list.push_back(tir::transform::StorageFlatten(64, instrument_bound_checkers));
           pass_list.push_back(tir::transform::LowerCrossThreadReduction());
           pass_list.push_back(tir::transform::LowerInitBlock());
           pass_list.push_back(tir::transform::PlanAndUpdateBufferAllocationLocation());
@@ -183,16 +180,16 @@ class VerifyGPUCodeNode : public PostprocNode {
           pass_list.push_back(tir::transform::LowerIntrin());
           // Convert Function to IRModule
           transform::PassContext pass_ctx = transform::PassContext::Current();
-          tir::PrimFunc f = WithAttr(GetRef<tir::PrimFunc>(prim_func), "global_symbol",
-                                     runtime::String(g_var->name_hint));
+          tir::PrimFunc f =
+              WithAttr(GetRef<tir::PrimFunc>(prim_func), "global_symbol", String(g_var->name_hint));
           f = WithAttr(f, tvm::attr::kTarget, this->target_);  // Required for LowerIntrin
-          bool noalias = pass_ctx->GetConfig<Bool>("tir.noalias", Bool(true)).value();
+          bool noalias = pass_ctx->GetConfig<bool>("tir.noalias", true).value();
           if (noalias) {
-            f = WithAttr(std::move(f), "tir.noalias", Bool(true));
+            f = WithAttr(std::move(f), "tir.noalias", true);
           }
           IRModule mod = IRModule(Map<GlobalVar, BaseFunc>({{GlobalVar(g_var->name_hint), f}}));
           lowered = tvm::transform::Sequential(pass_list)(std::move(mod));
-        } catch (const dmlc::Error& e) {
+        } catch (const std::exception&) {
           return false;
         }
         if (!Verify(lowered)) {
@@ -218,8 +215,10 @@ Postproc Postproc::VerifyGPUCode() {
   return Postproc(n);
 }
 
-TVM_REGISTER_NODE_TYPE(VerifyGPUCodeNode);
-TVM_REGISTER_GLOBAL("meta_schedule.PostprocVerifyGPUCode").set_body_typed(Postproc::VerifyGPUCode);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("meta_schedule.PostprocVerifyGPUCode", Postproc::VerifyGPUCode);
+});
 
 }  // namespace meta_schedule
 }  // namespace tvm

@@ -22,6 +22,7 @@
  * \brief Pass for fuse ShapeExpr.
  */
 
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/expr.h>
 #include <tvm/relax/expr_functor.h>
 #include <tvm/relax/transform.h>
@@ -128,12 +129,14 @@ IRModule BindShape(IRModule mod, const String& entry_name) {
 namespace transform {
 
 Pass BindShape(const String& entry_name) {
-  runtime::TypedPackedFunc<IRModule(IRModule, PassContext)> pass_func =
-      [=](IRModule m, PassContext pc) { return relax::BindShape(m, entry_name); };
+  auto pass_func = [=](IRModule m, PassContext pc) { return relax::BindShape(m, entry_name); };
   return CreateModulePass(pass_func, 0, "BindShape", {});
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.BindShape").set_body_typed(BindShape);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.transform.BindShape", BindShape);
+});
 
 }  // namespace transform
 }  // namespace relax

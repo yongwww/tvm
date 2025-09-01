@@ -23,9 +23,10 @@
  */
 
 #include <dmlc/json.h>
+#include <tvm/ffi/function.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/runtime/c_backend_api.h>
 #include <tvm/runtime/data_type.h>
-#include <tvm/runtime/packed_func.h>
 #include <tvm/runtime/profiling.h>
 #include <tvm/runtime/threading_backend.h>
 
@@ -43,18 +44,18 @@ namespace runtime {
 class DefaultTimerNode : public TimerNode {
  public:
   virtual void Start() {
-    TVMSynchronize(device_.device_type, device_.device_id, nullptr);
+    DeviceAPI::Get(device_)->StreamSync(device_, nullptr);
     start_ = std::chrono::high_resolution_clock::now();
   }
   virtual void Stop() {
-    TVMSynchronize(device_.device_type, device_.device_id, nullptr);
+    DeviceAPI::Get(device_)->StreamSync(device_, nullptr);
     duration_ = std::chrono::high_resolution_clock::now() - start_;
   }
   virtual int64_t SyncAndGetElapsedNanos() { return duration_.count(); }
   virtual ~DefaultTimerNode() {}
 
   explicit DefaultTimerNode(Device dev) : device_(dev) {}
-  static constexpr const char* _type_key = "DefaultTimerNode";
+  static constexpr const char* _type_key = "runtime.DefaultTimerNode";
   TVM_DECLARE_FINAL_OBJECT_INFO(DefaultTimerNode, TimerNode);
 
  private:
@@ -62,9 +63,6 @@ class DefaultTimerNode : public TimerNode {
   std::chrono::duration<int64_t, std::nano> duration_;
   Device device_;
 };
-
-TVM_REGISTER_OBJECT_TYPE(DefaultTimerNode);
-TVM_REGISTER_OBJECT_TYPE(TimerNode);
 
 Timer DefaultTimer(Device dev) { return Timer(make_object<DefaultTimerNode>(dev)); }
 
@@ -75,17 +73,18 @@ class CPUTimerNode : public TimerNode {
   virtual int64_t SyncAndGetElapsedNanos() { return duration_.count(); }
   virtual ~CPUTimerNode() {}
 
-  static constexpr const char* _type_key = "CPUTimerNode";
+  static constexpr const char* _type_key = "runtime.CPUTimerNode";
   TVM_DECLARE_FINAL_OBJECT_INFO(CPUTimerNode, TimerNode);
 
  private:
   std::chrono::high_resolution_clock::time_point start_;
   std::chrono::duration<int64_t, std::nano> duration_;
 };
-TVM_REGISTER_OBJECT_TYPE(CPUTimerNode);
 
-TVM_REGISTER_GLOBAL("profiling.timer.cpu").set_body_typed([](Device dev) {
-  return Timer(make_object<CPUTimerNode>());
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("profiling.timer.cpu",
+                        [](Device dev) { return Timer(make_object<CPUTimerNode>()); });
 });
 
 // keep track of which timers are not defined but we have already warned about
@@ -93,8 +92,9 @@ std::set<DLDeviceType> seen_devices;
 std::mutex seen_devices_lock;
 
 Timer Timer::Start(Device dev) {
-  auto f = Registry::Get(std::string("profiling.timer.") + DLDeviceType2Str(dev.device_type));
-  if (f == nullptr) {
+  auto f = tvm::ffi::Function::GetGlobal(std::string("profiling.timer.") +
+                                         DLDeviceType2Str(dev.device_type));
+  if (!f.has_value()) {
     {
       std::lock_guard<std::mutex> lock(seen_devices_lock);
       if (seen_devices.find(dev.device_type) == seen_devices.end()) {
@@ -108,18 +108,21 @@ Timer Timer::Start(Device dev) {
     t->Start();
     return t;
   } else {
-    Timer t = f->operator()(dev);
+    Timer t = f->operator()(dev).cast<Timer>();
     t->Start();
     return t;
   }
 }
 
-TVM_REGISTER_GLOBAL("profiling.start_timer").set_body_typed(Timer::Start);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("profiling.start_timer", Timer::Start);
+});
 
 namespace profiling {
 
 Profiler::Profiler(std::vector<Device> devs, std::vector<MetricCollector> metric_collectors,
-                   std::unordered_map<String, ObjectRef> configuration)
+                   std::unordered_map<String, ffi::Any> configuration)
     : devs_(devs), collectors_(metric_collectors), configuration_(configuration) {
   is_running_ = false;
   std::vector<DeviceWrapper> wrapped_devs;
@@ -144,7 +147,7 @@ void Profiler::Start() {
 }
 
 void Profiler::StartCall(String name, Device dev,
-                         std::unordered_map<std::string, ObjectRef> extra_metrics) {
+                         std::unordered_map<std::string, ffi::Any> extra_metrics) {
   std::vector<std::pair<MetricCollector, ObjectRef>> objs;
   for (auto& collector : collectors_) {
     ObjectRef obj = collector->Start(dev);
@@ -155,7 +158,7 @@ void Profiler::StartCall(String name, Device dev,
   in_flight_.push(CallFrame{dev, name, Timer::Start(dev), extra_metrics, objs});
 }
 
-void Profiler::StopCall(std::unordered_map<std::string, ObjectRef> extra_metrics) {
+void Profiler::StopCall(std::unordered_map<std::string, ffi::Any> extra_metrics) {
   CallFrame cf = in_flight_.top();
   cf.timer->Stop();
   for (auto& p : extra_metrics) {
@@ -282,8 +285,8 @@ String ReportNode::AsCSV() const {
           s << (*it).second.as<PercentNode>()->percent;
         } else if ((*it).second.as<RatioNode>()) {
           s << (*it).second.as<RatioNode>()->ratio;
-        } else if ((*it).second.as<StringObj>()) {
-          s << "\"" << Downcast<String>((*it).second) << "\"";
+        } else if (auto opt_str = (*it).second.as<ffi::String>()) {
+          s << "\"" << *opt_str << "\"";
         }
       }
       if (i < headers.size() - 1) {
@@ -296,10 +299,10 @@ String ReportNode::AsCSV() const {
 }
 
 namespace {
-void metric_as_json(std::ostream& os, ObjectRef o) {
-  if (o.as<StringObj>()) {
+void metric_as_json(std::ostream& os, ffi::Any o) {
+  if (auto opt_str = o.as<String>()) {
     os << "{\"string\":"
-       << "\"" << Downcast<String>(o) << "\""
+       << "\"" << *opt_str << "\""
        << "}";
   } else if (const CountNode* n = o.as<CountNode>()) {
     os << "{\"count\":" << n->value << "}";
@@ -313,7 +316,7 @@ void metric_as_json(std::ostream& os, ObjectRef o) {
     os << "{\"ratio\":" << std::setprecision(std::numeric_limits<double>::max_digits10)
        << std::fixed << n->ratio << "}";
   } else {
-    LOG(FATAL) << "Unprintable type " << o->GetTypeKey();
+    LOG(FATAL) << "Unprintable type " << o.GetTypeKey();
   }
 }
 }  // namespace
@@ -385,7 +388,7 @@ String ReportNode::AsJSON() const {
 // Aggregate a set of values for a metric. Computes sum for Duration, Count,
 // and Percent; average for Ratio; and assumes all Strings are the same. All
 // ObjectRefs in metrics must have the same type.
-ObjectRef AggregateMetric(const std::vector<ObjectRef>& metrics) {
+Any AggregateMetric(const std::vector<ffi::Any>& metrics) {
   ICHECK_GT(metrics.size(), 0) << "Must pass a non-zero number of metrics";
   if (metrics[0].as<DurationNode>()) {
     double sum = 0;
@@ -411,19 +414,19 @@ ObjectRef AggregateMetric(const std::vector<ObjectRef>& metrics) {
       sum += metric.as<RatioNode>()->ratio;
     }
     return ObjectRef(make_object<RatioNode>(sum / metrics.size()));
-  } else if (metrics[0].as<StringObj>()) {
+  } else if (auto opt_str = metrics[0].as<ffi::String>()) {
     for (auto& m : metrics) {
-      if (Downcast<String>(metrics[0]) != Downcast<String>(m)) {
-        return ObjectRef(String(""));
+      if (*opt_str != m.as<ffi::String>()) {
+        return String("");
       }
     }
     // Assume all strings in metrics are the same.
     return metrics[0];
   } else {
     LOG(FATAL) << "Can only aggregate metrics with types DurationNode, CountNode, "
-                  "PercentNode, RatioNode, and StringObj, but got "
-               << metrics[0]->GetTypeKey();
-    return ObjectRef();  // To silence warnings
+                  "PercentNode, RatioNode, and String, but got "
+               << metrics[0].GetTypeKey();
+    return ffi::Any();  // To silence warnings
   }
 }
 
@@ -439,7 +442,7 @@ static void set_locale_for_separators(std::stringstream& s) {
   }
 }
 
-static String print_metric(ObjectRef metric) {
+static String print_metric(ffi::Any metric) {
   std::string val;
   if (metric.as<CountNode>()) {
     std::stringstream s;
@@ -460,31 +463,31 @@ static String print_metric(ObjectRef metric) {
     set_locale_for_separators(s);
     s << std::setprecision(2) << metric.as<RatioNode>()->ratio;
     val = s.str();
-  } else if (metric.as<StringObj>()) {
-    val = Downcast<String>(metric);
+  } else if (auto opt_str = metric.as<ffi::String>()) {
+    val = *opt_str;
   } else {
-    LOG(FATAL) << "Cannot print metric of type " << metric->GetTypeKey();
+    LOG(FATAL) << "Cannot print metric of type " << metric.GetTypeKey();
   }
   return val;
 }
 
 String ReportNode::AsTable(bool sort, bool aggregate, bool compute_col_sums) const {
   // aggregate calls by op hash (or op name if hash is not set) + argument shapes
-  std::vector<Map<String, ObjectRef>> aggregated_calls;
+  std::vector<Map<String, ffi::Any>> aggregated_calls;
   if (aggregate) {
     std::unordered_map<std::string, std::vector<size_t>> aggregates;
     for (size_t i = 0; i < calls.size(); i++) {
       auto& frame = calls[i];
       auto it = frame.find("Hash");
-      std::string name = Downcast<String>(frame["Name"]);
+      std::string name = frame["Name"].cast<String>();
       if (it != frame.end()) {
-        name = Downcast<String>((*it).second);
+        name = (*it).second.cast<String>();
       }
       if (frame.find("Argument Shapes") != frame.end()) {
-        name += Downcast<String>(frame["Argument Shapes"]);
+        name += frame["Argument Shapes"].cast<String>();
       }
       if (frame.find("Device") != frame.end()) {
-        name += Downcast<String>(frame["Device"]);
+        name += frame["Device"].cast<String>();
       }
 
       if (aggregates.find(name) == aggregates.end()) {
@@ -494,7 +497,7 @@ String ReportNode::AsTable(bool sort, bool aggregate, bool compute_col_sums) con
       }
     }
     for (const auto& p : aggregates) {
-      std::unordered_map<String, ObjectRef> aggregated;
+      std::unordered_map<String, ffi::Any> aggregated;
       std::unordered_set<std::string> metrics;
       for (auto& call : calls) {
         for (auto& metric : call) {
@@ -502,11 +505,11 @@ String ReportNode::AsTable(bool sort, bool aggregate, bool compute_col_sums) con
         }
       }
       for (const std::string& metric : metrics) {
-        std::vector<ObjectRef> per_call;
+        std::vector<ffi::Any> per_call;
         for (auto i : p.second) {
           auto& call = calls[i];
           auto it = std::find_if(call.begin(), call.end(),
-                                 [&metric](const std::pair<String, ObjectRef>& call_metric) {
+                                 [&metric](const std::pair<String, ffi::Any>& call_metric) {
                                    return std::string(call_metric.first) == metric;
                                  });
           if (it != call.end()) {
@@ -528,7 +531,7 @@ String ReportNode::AsTable(bool sort, bool aggregate, bool compute_col_sums) con
   // sort rows by duration
   if (sort) {
     std::sort(aggregated_calls.begin(), aggregated_calls.end(),
-              [&](const Map<String, ObjectRef>& a, const Map<String, ObjectRef>& b) {
+              [&](const Map<String, ffi::Any>& a, const Map<String, ffi::Any>& b) {
                 return a.at("Duration (us)").as<DurationNode>()->microseconds >
                        b.at("Duration (us)").as<DurationNode>()->microseconds;
               });
@@ -536,7 +539,7 @@ String ReportNode::AsTable(bool sort, bool aggregate, bool compute_col_sums) con
 
   // compute columnwise sums
   if (compute_col_sums) {
-    std::unordered_map<String, ObjectRef> col_sums;
+    std::unordered_map<String, ffi::Any> col_sums;
     for (auto call : aggregated_calls) {
       for (auto p : call) {
         if (p.second.as<CountNode>()) {
@@ -572,7 +575,7 @@ String ReportNode::AsTable(bool sort, bool aggregate, bool compute_col_sums) con
 
   // per-device metrics
   for (auto p : device_metrics) {
-    Map<String, ObjectRef> metrics = p.second;
+    Map<String, ffi::Any> metrics = p.second;
     metrics.Set("Name", String("Total"));
     aggregated_calls.push_back(metrics);
   }
@@ -657,9 +660,9 @@ std::string DeviceString(Device dev) {
 
 Report Profiler::Report() {
   // sync all timers and normalize rows
-  std::vector<std::unordered_map<String, ObjectRef>> rows;
+  std::vector<std::unordered_map<String, ffi::Any>> rows;
   for (auto& cf : calls_) {
-    std::unordered_map<String, ObjectRef> row;
+    std::unordered_map<String, ffi::Any> row;
     double us = cf.timer->SyncAndGetElapsedNanos() / 1e3;
     row["Duration (us)"] = ObjectRef(make_object<DurationNode>(us));
     row["Count"] = ObjectRef(make_object<CountNode>(1));
@@ -671,13 +674,13 @@ Report Profiler::Report() {
     rows.push_back(row);
   }
 
-  // the last couple of call frames are the overall times
+  // the last frames are the overall times
   double overall_time_us = 0;
-  std::unordered_map<String, Map<String, ObjectRef>> device_metrics;
+  std::unordered_map<String, Map<String, ffi::Any>> device_metrics;
   for (size_t i = 0; i < devs_.size(); i++) {
     auto row = rows[rows.size() - 1];
     rows.pop_back();
-    device_metrics[Downcast<String>(row["Device"])] = row;
+    device_metrics[row["Device"].cast<String>()] = row;
     overall_time_us =
         std::max(overall_time_us, row["Duration (us)"].as<DurationNode>()->microseconds);
   }
@@ -689,7 +692,7 @@ Report Profiler::Report() {
   }
 
   // convert to map
-  std::vector<Map<String, ObjectRef>> converted_rows;
+  std::vector<Map<String, ffi::Any>> converted_rows;
   for (const auto& row : rows) {
     converted_rows.push_back(row);
   }
@@ -697,9 +700,9 @@ Report Profiler::Report() {
   return profiling::Report(converted_rows, device_metrics, configuration_);
 }
 
-Report::Report(Array<Map<String, ObjectRef>> calls,
-               Map<String, Map<String, ObjectRef>> device_metrics,
-               Map<String, ObjectRef> configuration) {
+Report::Report(Array<Map<String, ffi::Any>> calls,
+               Map<String, Map<String, ffi::Any>> device_metrics,
+               Map<String, ffi::Any> configuration) {
   auto node = make_object<ReportNode>();
   node->calls = std::move(calls);
   node->device_metrics = std::move(device_metrics);
@@ -707,12 +710,12 @@ Report::Report(Array<Map<String, ObjectRef>> calls,
   data_ = std::move(node);
 }
 
-Map<String, ObjectRef> parse_metrics(dmlc::JSONReader* reader) {
+Map<String, ffi::Any> parse_metrics(dmlc::JSONReader* reader) {
   reader->BeginObject();
   std::string metric_name, metric_value_name;
-  Map<String, ObjectRef> metrics;
+  Map<String, ffi::Any> metrics;
   while (reader->NextObjectItem(&metric_name)) {
-    ObjectRef o;
+    ffi::Any o;
     reader->BeginObject();
     reader->NextObjectItem(&metric_value_name);
     if (metric_value_name == "microseconds") {
@@ -753,9 +756,9 @@ Report Report::FromJSON(String json) {
   std::stringstream input(json.operator std::string());
   dmlc::JSONReader reader(&input);
   std::string key;
-  Array<Map<String, ObjectRef>> calls;
-  Map<String, Map<String, ObjectRef>> device_metrics;
-  Map<String, ObjectRef> configuration;
+  Array<Map<String, ffi::Any>> calls;
+  Map<String, Map<String, ffi::Any>> device_metrics;
+  Map<String, ffi::Any> configuration;
 
   reader.BeginObject();
   while (reader.NextObjectItem(&key)) {
@@ -776,45 +779,38 @@ Report Report::FromJSON(String json) {
       configuration = parse_metrics(&reader);
     }
   }
-
   return Report(calls, device_metrics, configuration);
 }
 
-TVM_REGISTER_OBJECT_TYPE(DurationNode);
-TVM_REGISTER_OBJECT_TYPE(PercentNode);
-TVM_REGISTER_OBJECT_TYPE(CountNode);
-TVM_REGISTER_OBJECT_TYPE(RatioNode);
-TVM_REGISTER_OBJECT_TYPE(ReportNode);
-TVM_REGISTER_OBJECT_TYPE(DeviceWrapperNode);
-TVM_REGISTER_OBJECT_TYPE(MetricCollectorNode);
-
-TVM_REGISTER_GLOBAL("runtime.profiling.AsTable").set_body_method<Report>(&ReportNode::AsTable);
-TVM_REGISTER_GLOBAL("runtime.profiling.AsCSV").set_body_typed([](Report n) { return n->AsCSV(); });
-TVM_REGISTER_GLOBAL("runtime.profiling.AsJSON").set_body_typed([](Report n) {
-  return n->AsJSON();
-});
-TVM_REGISTER_GLOBAL("runtime.profiling.FromJSON").set_body_typed(Report::FromJSON);
-TVM_REGISTER_GLOBAL("runtime.profiling.DeviceWrapper").set_body_typed([](Device dev) {
-  return DeviceWrapper(dev);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef()
+      .def_method("runtime.profiling.AsTable", &ReportNode::AsTable)
+      .def("runtime.profiling.AsCSV", [](Report n) { return n->AsCSV(); })
+      .def("runtime.profiling.AsJSON", [](Report n) { return n->AsJSON(); })
+      .def("runtime.profiling.FromJSON", Report::FromJSON)
+      .def("runtime.profiling.DeviceWrapper", [](Device dev) { return DeviceWrapper(dev); });
 });
 
-PackedFunc ProfileFunction(Module mod, std::string func_name, int device_type, int device_id,
-                           int warmup_iters, Array<MetricCollector> collectors) {
+ffi::Function ProfileFunction(ffi::Module mod, std::string func_name, int device_type,
+                              int device_id, int warmup_iters, Array<MetricCollector> collectors) {
   // Module::GetFunction is not const, so this lambda has to be mutable
-  return PackedFunc([=](TVMArgs args, TVMRetValue* ret) mutable {
-    PackedFunc f = mod.GetFunction(func_name);
-    CHECK(f.defined()) << "There is no function called \"" << func_name << "\" in the module";
+  return ffi::Function::FromPacked([=](const ffi::AnyView* args, int32_t num_args,
+                                       ffi::Any* ret) mutable {
+    auto optf = mod->GetFunction(func_name);
+    CHECK(optf.has_value()) << "There is no function called \"" << func_name << "\" in the module";
+    auto f = *optf;
     Device dev{static_cast<DLDeviceType>(device_type), device_id};
 
     // warmup
     for (int i = 0; i < warmup_iters; i++) {
-      f.CallPacked(args, ret);
+      f.CallPacked(args, num_args, ret);
     }
 
     for (auto& collector : collectors) {
       collector->Init({DeviceWrapper(dev)});
     }
-    std::vector<Map<String, ObjectRef>> results;
+    std::vector<Map<String, ffi::Any>> results;
     results.reserve(collectors.size());
     std::vector<std::pair<MetricCollector, ObjectRef>> collector_data;
     collector_data.reserve(collectors.size());
@@ -827,12 +823,12 @@ PackedFunc ProfileFunction(Module mod, std::string func_name, int device_type, i
     }
 
     // TODO(tkonolige): repeated calls if the runtime is small?
-    f.CallPacked(args, ret);
+    f.CallPacked(args, num_args, ret);
 
     for (auto& kv : collector_data) {
       results.push_back(kv.first->Stop(kv.second));
     }
-    Map<String, ObjectRef> combined_results;
+    Map<String, ffi::Any> combined_results;
     for (auto m : results) {
       for (auto p : m) {
         // assume that there is no shared metric name between collectors
@@ -843,40 +839,36 @@ PackedFunc ProfileFunction(Module mod, std::string func_name, int device_type, i
   });
 }
 
-TVM_REGISTER_GLOBAL("runtime.profiling.ProfileFunction")
-    .set_body_typed<PackedFunc(Module, String, int, int, int,
-                               Array<MetricCollector>)>([](Module mod, String func_name,
-                                                           int device_type, int device_id,
-                                                           int warmup_iters,
-                                                           Array<MetricCollector> collectors) {
-      if (mod->type_key() == std::string("rpc")) {
-        LOG(FATAL)
-            << "Profiling a module over RPC is not yet supported";  // because we can't send
-                                                                    // MetricCollectors over rpc.
-        throw;
-      } else {
-        return ProfileFunction(mod, func_name, device_type, device_id, warmup_iters, collectors);
-      }
-    });
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def(
+      "runtime.profiling.ProfileFunction",
+      [](ffi::Module mod, String func_name, int device_type, int device_id, int warmup_iters,
+         Array<MetricCollector> collectors) {
+        if (mod->kind() == std::string("rpc")) {
+          LOG(FATAL)
+              << "Profiling a module over RPC is not yet supported";  // because we can't send
+                                                                      // MetricCollectors over rpc.
+          throw;
+        } else {
+          return ProfileFunction(mod, func_name, device_type, device_id, warmup_iters, collectors);
+        }
+      });
+});
 
-PackedFunc WrapTimeEvaluator(PackedFunc pf, Device dev, int number, int repeat, int min_repeat_ms,
-                             int limit_zero_time_iterations, int cooldown_interval_ms,
-                             int repeats_to_cooldown, int cache_flush_bytes, PackedFunc f_preproc) {
+ffi::Function WrapTimeEvaluator(ffi::Function pf, Device dev, int number, int repeat,
+                                int min_repeat_ms, int limit_zero_time_iterations,
+                                int cooldown_interval_ms, int repeats_to_cooldown,
+                                int cache_flush_bytes, ffi::Function f_preproc) {
   ICHECK(pf != nullptr);
-
-  if (static_cast<int>(dev.device_type) == static_cast<int>(kDLMicroDev)) {
-    auto get_micro_time_evaluator = runtime::Registry::Get("micro._GetMicroTimeEvaluator");
-    ICHECK(get_micro_time_evaluator != nullptr) << "micro backend not enabled";
-    return (*get_micro_time_evaluator)(pf, dev, number, repeat);
-  }
 
   auto ftimer = [pf, dev, number, repeat, min_repeat_ms, limit_zero_time_iterations,
                  cooldown_interval_ms, repeats_to_cooldown, cache_flush_bytes,
-                 f_preproc](TVMArgs args, TVMRetValue* rv) mutable {
-    TVMRetValue temp;
+                 f_preproc](const ffi::AnyView* args, int num_args, ffi::Any* rv) mutable {
+    ffi::Any temp;
     std::ostringstream os;
     // skip first time call, to activate lazy compilation components.
-    pf.CallPacked(args, &temp);
+    pf.CallPacked(args, num_args, &temp);
 
     // allocate two large arrays to flush L2 cache
     NDArray arr1, arr2;
@@ -889,7 +881,7 @@ PackedFunc WrapTimeEvaluator(PackedFunc pf, Device dev, int number, int repeat, 
 
     for (int i = 0; i < repeat; ++i) {
       if (f_preproc != nullptr) {
-        f_preproc.CallPacked(args, &temp);
+        f_preproc.CallPacked(args, num_args, &temp);
       }
       double duration_ms = 0.0;
       int absolute_zero_times = 0;
@@ -906,7 +898,7 @@ PackedFunc WrapTimeEvaluator(PackedFunc pf, Device dev, int number, int repeat, 
         // start timing
         Timer t = Timer::Start(dev);
         for (int j = 0; j < number; ++j) {
-          pf.CallPacked(args, &temp);
+          pf.CallPacked(args, num_args, &temp);
         }
         t->Stop();
         int64_t t_nanos = t->SyncAndGetElapsedNanos();
@@ -923,36 +915,28 @@ PackedFunc WrapTimeEvaluator(PackedFunc pf, Device dev, int number, int repeat, 
     }
 
     std::string blob = os.str();
-    TVMByteArray arr;
-    arr.size = blob.length();
-    arr.data = blob.data();
     // return the time.
-    *rv = arr;
+    *rv = ffi::Bytes(std::move(blob));
   };
-  return PackedFunc(ftimer);
+  return ffi::Function::FromPacked(ftimer);
 }
 
-TVM_REGISTER_GLOBAL("runtime.profiling.Report")
-    .set_body_typed([](Array<Map<String, ObjectRef>> calls,
-                       Map<String, Map<String, ObjectRef>> device_metrics,
-                       Map<String, ObjectRef> configuration) {
-      return Report(calls, device_metrics, configuration);
-    });
-
-TVM_REGISTER_GLOBAL("runtime.profiling.Count").set_body_typed([](int64_t count) {
-  return ObjectRef(make_object<CountNode>(count));
-});
-
-TVM_REGISTER_GLOBAL("runtime.profiling.Percent").set_body_typed([](double percent) {
-  return ObjectRef(make_object<PercentNode>(percent));
-});
-
-TVM_REGISTER_GLOBAL("runtime.profiling.Duration").set_body_typed([](double duration) {
-  return ObjectRef(make_object<DurationNode>(duration));
-});
-
-TVM_REGISTER_GLOBAL("runtime.profiling.Ratio").set_body_typed([](double ratio) {
-  return ObjectRef(make_object<RatioNode>(ratio));
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef()
+      .def("runtime.profiling.Report",
+           [](Array<Map<String, ffi::Any>> calls, Map<String, Map<String, ffi::Any>> device_metrics,
+              Map<String, ffi::Any> configuration) {
+             return Report(calls, device_metrics, configuration);
+           })
+      .def("runtime.profiling.Count",
+           [](int64_t count) { return ObjectRef(make_object<CountNode>(count)); })
+      .def("runtime.profiling.Percent",
+           [](double percent) { return ObjectRef(make_object<PercentNode>(percent)); })
+      .def("runtime.profiling.Duration",
+           [](double duration) { return ObjectRef(make_object<DurationNode>(duration)); })
+      .def("runtime.profiling.Ratio",
+           [](double ratio) { return ObjectRef(make_object<RatioNode>(ratio)); });
 });
 
 }  // namespace profiling

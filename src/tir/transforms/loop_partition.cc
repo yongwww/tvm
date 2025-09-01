@@ -22,7 +22,8 @@
  */
 #include <tvm/arith/analyzer.h>
 #include <tvm/arith/bound.h>
-#include <tvm/runtime/registry.h>
+#include <tvm/ffi/function.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/tir/analysis.h>
 #include <tvm/tir/builtin.h>
 #include <tvm/tir/expr.h>
@@ -40,28 +41,36 @@
 namespace tvm {
 namespace tir {
 
-struct LoopPartitionConfigNode : public tvm::AttrsNode<LoopPartitionConfigNode> {
+struct LoopPartitionConfigNode : public AttrsNodeReflAdapter<LoopPartitionConfigNode> {
   bool partition_const_loop;
   bool no_unroll_loop_with_extent_one;
   bool unroll_loop_with_partition_hint_no_interval;
 
-  TVM_DECLARE_ATTRS(LoopPartitionConfigNode, "tir.transform.LoopPartitionConfig") {
-    TVM_ATTR_FIELD(partition_const_loop).describe("Split constant loop").set_default(false);
-    TVM_ATTR_FIELD(no_unroll_loop_with_extent_one)
-        .describe("Don't unroll loops with extent 1")
-        .set_default(false);
-    TVM_ATTR_FIELD(unroll_loop_with_partition_hint_no_interval)
-        .describe("Unroll loops with pragma_loop_partition_hint and no interval")
-        .set_default(false);
+  static void RegisterReflection() {
+    namespace refl = tvm::ffi::reflection;
+    refl::ObjectDef<LoopPartitionConfigNode>()
+        .def_ro("partition_const_loop", &LoopPartitionConfigNode::partition_const_loop,
+                "Split constant loop", refl::DefaultValue(false))
+        .def_ro("no_unroll_loop_with_extent_one",
+                &LoopPartitionConfigNode::no_unroll_loop_with_extent_one,
+                "Don't unroll loops with extent 1", refl::DefaultValue(false))
+        .def_ro("unroll_loop_with_partition_hint_no_interval",
+                &LoopPartitionConfigNode::unroll_loop_with_partition_hint_no_interval,
+                "Unroll loops with pragma_loop_partition_hint and no interval",
+                refl::DefaultValue(false));
   }
+
+  static constexpr const char* _type_key = "tir.transform.LoopPartitionConfig";
+  TVM_FFI_DECLARE_FINAL_OBJECT_INFO(LoopPartitionConfigNode, BaseAttrsNode);
 };
+
+TVM_FFI_STATIC_INIT_BLOCK({ LoopPartitionConfigNode::RegisterReflection(); });
 
 class LoopPartitionConfig : public Attrs {
  public:
   TVM_DEFINE_NOTNULLABLE_OBJECT_REF_METHODS(LoopPartitionConfig, Attrs, LoopPartitionConfigNode);
 };
 
-TVM_REGISTER_NODE_TYPE(LoopPartitionConfigNode);
 TVM_REGISTER_PASS_CONFIG_OPTION("tir.LoopPartition", LoopPartitionConfig);
 
 using arith::DeduceBound;
@@ -145,9 +154,9 @@ class CandidateSelector final : public StmtExprVisitor {
     } else if (op->attr_key == attr::pragma_loop_partition_hint) {
       if (analyzer_.CanProve(op->value)) {
         const VarNode* var = nullptr;
-        if (op->node->IsInstance<VarNode>()) {
+        if (op->node.as<VarNode>()) {
           var = op->node.as<VarNode>();
-        } else if (op->node->IsInstance<IterVarNode>()) {
+        } else if (op->node.as<IterVarNode>()) {
           var = op->node.as<IterVarNode>()->var.get();
         }
         ICHECK(var);
@@ -810,7 +819,10 @@ Pass LoopPartition() {
   return CreatePrimFuncPass(pass_func, 0, "tir.LoopPartition", {});
 }
 
-TVM_REGISTER_GLOBAL("tir.transform.LoopPartition").set_body_typed(LoopPartition);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("tir.transform.LoopPartition", LoopPartition);
+});
 
 }  // namespace transform
 

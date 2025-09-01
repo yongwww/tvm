@@ -479,17 +479,11 @@ def cli_name(s: str) -> str:
 
 
 def typing_get_origin(annotation):
-    if sys.version_info >= (3, 8):
-        return typing.get_origin(annotation)
-    else:
-        return annotation.__origin__
+    return typing.get_origin(annotation)
 
 
 def typing_get_args(annotation):
-    if sys.version_info >= (3, 8):
-        return typing.get_args(annotation)
-    else:
-        return annotation.__args__
+    return typing.get_args(annotation)
 
 
 def is_optional_type(annotation):
@@ -594,7 +588,6 @@ generated = [
         help="Run GPU build and test(s)",
         options={
             "cpp": CPP_UNITTEST,
-            "topi": ("run topi tests", ["./tests/scripts/task_python_topi.sh"]),
             "unittest": (
                 "run unit tests",
                 [
@@ -684,7 +677,6 @@ generated = [
                 "run full Python tests",
                 [
                     "./tests/scripts/task_python_unittest.sh",
-                    "./tests/scripts/task_python_arm_compute_library.sh",
                 ],
             ),
         },

@@ -21,6 +21,7 @@
  * \brief Automatic mixed precision pass.
  */
 
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/expr_functor.h>
 #include <tvm/relax/op_attr_types.h>
 #include <tvm/relax/transform.h>
@@ -37,8 +38,6 @@
 
 namespace tvm {
 namespace relax {
-
-using runtime::String;
 
 int GetMixedPrecisionInfo(const CallNode* call_node) {
   const OpNode* op_node = call_node->op.as<OpNode>();
@@ -318,7 +317,7 @@ class ToMixedPrecisionRewriter : public ExprMutator {
       // We only rewrite the expr if the dtype is fp16 or fp32, dtypes such as int32, float64 is not
       // supported to be rewritten
       if (tensor->dtype != fp16_ && tensor->dtype != fp32_) return expr;
-      return astype(expr, DataType(String2DLDataType(to[0].LeafValue())));
+      return astype(expr, DataType(StringToDLDataType(to[0].LeafValue())));
     };
     return TransformTupleLeaf<String>(expr, std::array<NType, 1>({to}), fvisitleaf);
   }
@@ -511,7 +510,7 @@ class ToMixedPrecisionRewriter : public ExprMutator {
     if (opt_new_dtype) {
       auto new_dtype = opt_new_dtype.value();
       new_call.CopyOnWrite()->args = RewriteArgs(new_call->args, new_dtype);
-      new_call.CopyOnWrite()->struct_info_ = NullOpt;
+      new_call.CopyOnWrite()->struct_info_ = std::nullopt;
 
       new_value = builder_->Normalize(Call(new_call));
 
@@ -534,8 +533,8 @@ class ToMixedPrecisionRewriter : public ExprMutator {
       return;
     }
     ObjectPtr<TupleNode> new_tuple = make_object<TupleNode>(*tuple_node);
-    new_tuple->fields = std::move(RemapArgs(tuple_node->fields));
-    new_tuple->struct_info_ = NullOpt;
+    new_tuple->fields = RemapArgs(tuple_node->fields);
+    new_tuple->struct_info_ = std::nullopt;
     Expr new_value = builder_->Normalize(Tuple(new_tuple));
     if (!binding->var->IsInstance<DataflowVarNode>()) {
       // Global var: store the tensors to the original dtype
@@ -555,7 +554,7 @@ class ToMixedPrecisionRewriter : public ExprMutator {
     ObjectPtr<TupleGetItemNode> new_tuple_get_item =
         make_object<TupleGetItemNode>(*tuple_get_item_node);
     new_tuple_get_item->tuple = RemapArgs({tuple_get_item_node->tuple})[0];
-    new_tuple_get_item->struct_info_ = NullOpt;
+    new_tuple_get_item->struct_info_ = std::nullopt;
     Expr new_value = TupleGetItem(new_tuple_get_item);
     if (!binding->var->IsInstance<DataflowVarNode>()) {
       // Global var: store the tensors to the original dtype
@@ -602,7 +601,7 @@ class ToMixedPrecisionRewriter : public ExprMutator {
 
 Expr ToMixedPrecision(const Function& f, const DataType& out_dtype,
                       Optional<Array<String>> fp16_input_names) {
-  VarDTypeMap only_fp16_map = std::move(DTypeDecisionCollector::Collect(f, out_dtype));
+  VarDTypeMap only_fp16_map = DTypeDecisionCollector::Collect(f, out_dtype);
   std::unordered_set<std::string> fp16_input_names_set;
   if (fp16_input_names) {
     fp16_input_names_set.insert(fp16_input_names.value().begin(), fp16_input_names.value().end());
@@ -614,14 +613,16 @@ Expr ToMixedPrecision(const Function& f, const DataType& out_dtype,
 namespace transform {
 
 Pass ToMixedPrecision(const DataType& out_dtype, Optional<Array<String>> fp16_input_names) {
-  runtime::TypedPackedFunc<Function(Function, IRModule, PassContext)> pass_func =
-      [=](Function f, IRModule m, PassContext pc) {
-        return Downcast<Function>(ToMixedPrecision(f, out_dtype, fp16_input_names));
-      };
+  auto pass_func = [=](Function f, IRModule m, PassContext pc) {
+    return Downcast<Function>(ToMixedPrecision(f, out_dtype, fp16_input_names));
+  };
   return CreateFunctionPass(pass_func, 0, "ToMixedPrecision", {});
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.ToMixedPrecision").set_body_typed(ToMixedPrecision);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.transform.ToMixedPrecision", ToMixedPrecision);
+});
 
 }  // namespace transform
 

@@ -21,9 +21,10 @@
  * \file cpu_device_api.cc
  */
 #include <dmlc/thread_local.h>
+#include <tvm/ffi/function.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/runtime/device_api.h>
 #include <tvm/runtime/logging.h>
-#include <tvm/runtime/registry.h>
 
 #include <cstdlib>
 #include <cstring>
@@ -52,7 +53,7 @@ namespace runtime {
 class CPUDeviceAPI final : public DeviceAPI {
  public:
   void SetDevice(Device dev) final {}
-  void GetAttr(Device dev, DeviceAttrKind kind, TVMRetValue* rv) final {
+  void GetAttr(Device dev, DeviceAttrKind kind, ffi::Any* rv) final {
     if (kind == kExist) {
       *rv = 1;
     }
@@ -150,9 +151,12 @@ void CPUDeviceAPI::FreeWorkspace(Device dev, void* data) {
   dmlc::ThreadLocalStore<CPUWorkspacePool>::Get()->FreeWorkspace(dev, data);
 }
 
-TVM_REGISTER_GLOBAL("device_api.cpu").set_body([](TVMArgs args, TVMRetValue* rv) {
-  DeviceAPI* ptr = CPUDeviceAPI::Global();
-  *rv = static_cast<void*>(ptr);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def_packed("device_api.cpu", [](ffi::PackedArgs args, ffi::Any* rv) {
+    DeviceAPI* ptr = CPUDeviceAPI::Global();
+    *rv = static_cast<void*>(ptr);
+  });
 });
 }  // namespace runtime
 }  // namespace tvm

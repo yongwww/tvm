@@ -21,8 +21,9 @@
  * \file verify_memory.cc
  * \brief Pass to check if memory accesses are legal.
  */
+#include <tvm/ffi/function.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/ir/transform.h>
-#include <tvm/runtime/registry.h>
 #include <tvm/target/target.h>
 #include <tvm/tir/analysis.h>
 #include <tvm/tir/builtin.h>
@@ -57,7 +58,7 @@ class MemoryAccessVerifier final : protected StmtExprVisitor {
 
   /// Interface to perform memory access verification
   void Run() {
-    if (!IsGPUDevice(dev_type_) && !IsFPGADevice(dev_type_)) return;
+    if (!IsGPUDevice(dev_type_)) return;
     StmtExprVisitor::VisitStmt(func_->body);
   }
 
@@ -150,10 +151,8 @@ class MemoryAccessVerifier final : protected StmtExprVisitor {
   /// Check if a given DLDeviceType/TVMDeviceExtType value denotes GPU device.
   static bool IsGPUDevice(int dev_type) {
     return kDLCUDA == dev_type || kDLOpenCL == dev_type || kDLVulkan == dev_type ||
-           kDLMetal == dev_type || kDLROCM == dev_type || kOpenGL == dev_type;
+           kDLMetal == dev_type || kDLROCM == dev_type;
   }
-  /// Check if a given DLDeviceType/TVMDeviceExtType value denotes FPGA device.
-  static bool IsFPGADevice(int dev_type) { return kDLSDAccel == dev_type || kDLAOCL == dev_type; }
 
  private:
   /// Status of visitor
@@ -188,7 +187,10 @@ std::vector<String> VerifyMemory_(const PrimFunc& func) {
 
 bool VerifyMemory(const PrimFunc& func) { return VerifyMemory_(func).size() == 0; }
 
-TVM_REGISTER_GLOBAL("tir.analysis.verify_memory").set_body_typed(VerifyMemory);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("tir.analysis.verify_memory", VerifyMemory);
+});
 
 namespace transform {
 
@@ -204,7 +206,7 @@ Pass VerifyMemory() {
           }
           LOG(FATAL) << "RuntimeError: Memory verification failed with the following errors:\n"
                      << s.str() << "  Did you forget to bind?\n"
-                     << func;
+                     << func.value();
         }
       }
     }
@@ -213,7 +215,10 @@ Pass VerifyMemory() {
   return tvm::transform::CreateModulePass(pass_func, 0, "tir.VerifyMemory", {});
 }
 
-TVM_REGISTER_GLOBAL("tir.transform.VerifyMemory").set_body_typed(VerifyMemory);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("tir.transform.VerifyMemory", VerifyMemory);
+});
 
 }  // namespace transform
 }  // namespace tir

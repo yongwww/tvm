@@ -174,7 +174,7 @@ def test_string_obj(session_kind):
 
     for i in range(num_workers):
         value = result.debug_get_from_remote(i)
-        assert isinstance(value, String)
+        assert isinstance(value, str)
         assert value == "hello_suffix"
 
 
@@ -220,7 +220,7 @@ def test_vm_module(session_kind):
         x_np = np.arange(8 * 16).astype("float32").reshape([8, 16])
         y_np = x_np.transpose()
 
-        rx.build(TestMod, target="llvm").export_library(path)
+        tvm.compile(TestMod, target="llvm").export_library(path)
         mod = sess.load_vm_module(path, device=device)
 
         x_disc = _numpy_to_worker_0(sess, x_np, device=device)
@@ -285,7 +285,7 @@ def test_vm_multi_func(session_kind):
         x_np = np.arange(8 * 16).astype("float32").reshape([8, 16])
         y_np = x_np.transpose()
 
-        rx.build(TestMod, target="llvm").export_library(path)
+        tvm.compile(TestMod, target="llvm").export_library(path)
         mod = sess.load_vm_module(path, device=device)
 
         x_disc = _numpy_to_worker_0(sess, x_np, device=device)

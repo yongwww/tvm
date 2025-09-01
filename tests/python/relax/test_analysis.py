@@ -636,7 +636,7 @@ def test_reshape_pattern_dyn_2():
 def test_reshape_pattern_dyn_3():
     @T.prim_func
     def reshape(var_A: T.handle, var_T_reshape: T.handle):
-        T.func_attr({"op_pattern": 8, "tir.noalias": T.bool(True)})
+        T.func_attr({"op_pattern": 8, "tir.noalias": True})
         n = T.int64()
         A = T.match_buffer(var_A, (n, T.int64(4096)), "float16")
         T_reshape = T.match_buffer(var_T_reshape, (T.int64(1), n, T.int64(4096)), "float16")
@@ -655,7 +655,7 @@ def test_reshape_pattern_dyn_3():
 def test_reshape_pattern_dyn_4():
     @T.prim_func
     def reshape(var_A: T.handle, var_T_reshape: T.handle):
-        T.func_attr({"op_pattern": 8, "tir.noalias": T.bool(True)})
+        T.func_attr({"op_pattern": 8, "tir.noalias": True})
         n = T.int64()
         A = T.match_buffer(var_A, (T.int64(1), n, T.int64(4096)), "float16")
         T_reshape = T.match_buffer(
@@ -684,7 +684,7 @@ def test_reshape_pattern_dyn_4():
 def test_reshape_pattern_dyn_5():
     @T.prim_func
     def reshape(var_A: T.handle, var_T_reshape: T.handle):
-        T.func_attr({"op_pattern": 8, "tir.noalias": T.bool(True)})
+        T.func_attr({"op_pattern": 8, "tir.noalias": True})
         n = T.int64()
         A = T.match_buffer(var_A, (T.int64(1), n, T.int64(32), T.int64(128)), "float16")
         T_reshape = T.match_buffer(var_T_reshape, (T.int64(1), n, T.int64(4096)), "float16")

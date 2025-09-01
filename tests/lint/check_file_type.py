@@ -48,8 +48,6 @@ ALLOW_EXTENSION = {
     "cu",
     "cuh",
     "bat",
-    # relay text format
-    "rly",
     # configurations
     "mk",
     "in",
@@ -175,6 +173,9 @@ def filename_allowed(name):
         return True
 
     if name.startswith("3rdparty"):
+        return True
+
+    if name.startswith("ffi/3rdparty"):
         return True
 
     if name in ALLOW_SPECIFIC_FILE:

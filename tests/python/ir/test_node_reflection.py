@@ -70,17 +70,17 @@ def test_make_smap():
 
 
 def test_make_node():
-    x = tvm.ir.make_node("IntImm", dtype="int32", value=10, span=None)
+    x = tvm.ir.make_node("ir.IntImm", dtype="int32", value=10, span=None)
     assert isinstance(x, tvm.tir.IntImm)
     assert x.value == 10
     A = te.placeholder((10,), name="A")
     AA = tvm.ir.make_node(
-        "Tensor", shape=A.shape, dtype=A.dtype, op=A.op, value_index=A.value_index
+        "te.Tensor", shape=A.shape, dtype=A.dtype, op=A.op, value_index=A.value_index
     )
     assert AA.op == A.op
     assert AA.value_index == A.value_index
 
-    y = tvm.ir.make_node("IntImm", dtype=tvm.runtime.String("int32"), value=10, span=None)
+    y = tvm.ir.make_node("ir.IntImm", dtype=tvm.runtime.String("int32"), value=10, span=None)
 
 
 def test_make_sum():
@@ -145,7 +145,7 @@ def test_pass_config():
     assert cfg.config["tir.UnrollLoop"].explicit_unroll == True
 
     # schema checking for specific config key
-    with pytest.raises(AttributeError):
+    with pytest.raises(TypeError):
         cfg = tvm.transform.PassContext(config={"tir.UnrollLoop": {"invalid": 1}})
 
     # schema check for un-registered config
@@ -179,6 +179,15 @@ def test_ndarray_dict():
     }
     m2 = tvm.ir.load_json(tvm.ir.save_json(m1))
     tvm.ir.assert_structural_equal(m1, m2)
+
+
+def test_free_var_equal():
+    x = tvm.tir.Var("x", dtype="int32")
+    y = tvm.tir.Var("y", dtype="int32")
+    z = tvm.tir.Var("z", dtype="int32")
+    v1 = x + y
+    v1 = y + z
+    tvm.ir.assert_structural_equal(x, z, map_free_vars=True)
 
 
 def test_alloc_const():

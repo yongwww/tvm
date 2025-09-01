@@ -23,8 +23,9 @@
  *  Re-write data access to enable memory sharing when possible.
  */
 #include <tvm/arith/analyzer.h>
+#include <tvm/ffi/function.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/ir/type.h>
-#include <tvm/runtime/registry.h>
 #include <tvm/target/target_info.h>
 #include <tvm/tir/analysis.h>
 #include <tvm/tir/builtin.h>
@@ -92,7 +93,7 @@ class LinearAccessPatternFinder final : public StmtExprVisitor {
     AllocEntry entry;
     entry.alloc = op;
     entry.level = level;
-    // Since StorageRewrite occurs after StorageFlatten/FlattenBuffer,
+    // Since StorageRewrite occurs after FlattenBuffer,
     // all allocations specify the extent of physical dimensions, and
     // is 1 for flat memory spaces.
     entry.num_physical_dimensions = op->extents.size();
@@ -528,7 +529,7 @@ class StoragePlanRewriter : public StmtExprMutator {
       Buffer buf = RemapBuffer(op->buffer, it->second->alloc_var);
       node.CopyOnWrite()->buffer = buf;
     }
-    return std::move(node);
+    return node;
   }
 
  private:
@@ -542,7 +543,7 @@ class StoragePlanRewriter : public StmtExprMutator {
     // The storage scope.
     StorageScope scope;
     // The physical dimensionality of the allocations.  Since
-    // StorageRewrite is applied after StorageFlatten/FlattenBuffer,
+    // StorageRewrite is applied after FlattenBuffer,
     // this is size of `AllocateNode::extents`.  If moved
     size_t ndim;
     // Allocs that shares this entry.
@@ -1510,14 +1511,15 @@ class VectorTypeRewriter : public StmtExprMutator {
     // Not needed for BufferStoreNode, so we can't just call
     // LegalizeDtype() in VisitBufferAccess.
     if (node.same_as(modified)) {
-      return std::move(node);
+      return node;
+
     } else {
       auto writer = modified.CopyOnWrite();
       writer->LegalizeDType();
       if (shuffle_index >= 0) {
         return Shuffle::ExtractElement(std::move(modified), shuffle_index);
       }
-      return std::move(modified);
+      return modified;
     }
   }
 
@@ -1525,7 +1527,7 @@ class VectorTypeRewriter : public StmtExprMutator {
     auto node = Downcast<BufferStore>(StmtExprMutator::VisitStmt_(op));
     auto [modified, shuffle_index] = VisitBufferAccess(std::move(node));
     ICHECK(shuffle_index < 0);
-    return std::move(modified);
+    return modified;
   }
 
   Stmt VisitStmt_(const LetStmtNode* op) final {
@@ -1761,7 +1763,10 @@ Pass StorageRewrite() {
   return CreatePrimFuncPass(pass_func, 0, "tir.StorageRewrite", {});
 }
 
-TVM_REGISTER_GLOBAL("tir.transform.StorageRewrite").set_body_typed(StorageRewrite);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("tir.transform.StorageRewrite", StorageRewrite);
+});
 
 Pass PointerValueTypeRewrite() {
   auto pass_func = [](PrimFunc f, IRModule m, PassContext ctx) {
@@ -1770,8 +1775,10 @@ Pass PointerValueTypeRewrite() {
   return CreatePrimFuncPass(pass_func, 0, "tir.PointerValueTypeRewrite", {});
 }
 
-TVM_REGISTER_GLOBAL("tir.transform.PointerValueTypeRewrite")
-    .set_body_typed(PointerValueTypeRewrite);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("tir.transform.PointerValueTypeRewrite", PointerValueTypeRewrite);
+});
 
 }  // namespace transform
 

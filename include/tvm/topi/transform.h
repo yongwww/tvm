@@ -41,6 +41,7 @@
 #include <limits>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "tvm/ir/expr.h"
@@ -193,17 +194,17 @@ inline Tensor expand_dims(const Tensor& x, int axis, int num_newaxis = 1,
  * \brief Permute the dimensions of an array
  *
  * \param x The input tensor
- * \param axes The indices of the permutation. If this is empty,
+ * \param opt_axes The indices of the permutation. If this is empty,
  * the dimensions will be reversed.
  * \param name The name of the operation
  * \param tag The tag to mark the operation
  *
  * \return A Tensor whose op member is the transpose operation
  */
-inline Tensor transpose(const Tensor& x, Array<Integer> axes, std::string name = "T_transpose",
-                        std::string tag = kInjective) {
-  if (!axes.defined() || axes.size() == 0) {
-    axes = Array<Integer>();
+inline Tensor transpose(const Tensor& x, Optional<Array<Integer>> opt_axes,
+                        std::string name = "T_transpose", std::string tag = kInjective) {
+  Array<Integer> axes = opt_axes.value_or({});
+  if (axes.size() == 0) {
     for (int i = static_cast<int>(x->shape.size()) - 1; i >= 0; --i) {
       axes.push_back(i);
     }
@@ -399,7 +400,7 @@ inline Tensor unravel_index(const Tensor& x, const Tensor& shape, std::string na
  * The removed dimensions must have a constant size of 1.
  *
  * \param x The input tensor
- * \param axis Indices of the dimensions to remove. If this is None,
+ * \param opt_axes Indices of the dimensions to remove. If this is None,
  * all entries with a constant size of 1 will be removed.
  * \param atleast1d Whether the output need to be atleast1d.
  * \param name The name of the operation
@@ -407,17 +408,18 @@ inline Tensor unravel_index(const Tensor& x, const Tensor& shape, std::string na
  *
  * \return A Tensor whose op member is the squeeze operation
  */
-inline Tensor squeeze(const Tensor& x, Array<Integer> axis, bool atleast1d = false,
+inline Tensor squeeze(const Tensor& x, Optional<Array<Integer>> opt_axes, bool atleast1d = false,
                       std::string name = "T_squeeze", std::string tag = kInjective) {
   auto ndim = x->shape.size();
   std::vector<int> axis_val;
-  if (!axis.defined()) {
+  if (!opt_axes.has_value()) {
     for (size_t i = 0; i < ndim; ++i) {
       if (IsConstInt(x->shape[i]) && GetConstInt(x->shape[i]) == 1) {
         axis_val.push_back(static_cast<int>(i));
       }
     }
   } else {
+    Array<Integer> axis = *std::move(opt_axes);
     for (size_t i = 0; i < axis.size(); ++i) {
       int64_t val = axis[i]->value;
       if (val < 0) {
@@ -575,8 +577,9 @@ inline Tensor stack(const Array<Tensor>& inputs, int axis = 0, std::string name 
  *
  * \return A Tensor whose op member is the split operation
  */
-inline Array<Tensor> split(const Tensor& x, Array<PrimExpr> split_indices, int axis,
-                           std::string name = "T_split", std::string tag = kInjective) {
+inline Array<Tensor> split_indices_array(const Tensor& x, Array<PrimExpr> split_indices, int axis,
+                                         std::string name = "T_split",
+                                         std::string tag = kInjective) {
   if (axis < 0) {
     axis += static_cast<int>(x->shape.size());
   }
@@ -775,7 +778,7 @@ inline Tensor dynamic_strided_slice(const Tensor& x, const Array<PrimExpr>& begi
 
   arith::Analyzer analyzer;
   for (size_t i = 0; i < num_slice_axes; ++i) {
-    // Check ProducerLoad to keep backward compatibility for Relay.
+    // Check ProducerLoad to keep backward compatibility for Relax.
     if (!begin[i]->IsInstance<ProducerLoadNode>() && !end[i]->IsInstance<ProducerLoadNode>() &&
         !strides[i]->IsInstance<ProducerLoadNode>()) {
       out_shape.push_back(
@@ -840,7 +843,7 @@ inline te::Tensor dynamic_strided_slice(const te::Tensor& x, const te::Tensor& b
 }
 
 /*!
- * \brief Calculate the output shape of strided_slice, the entry point for Relay type relation
+ * \brief Calculate the output shape of strided_slice, the entry point for Relax type relation
  *
  * \param ishape The input tensor shape
  * \param begin The indices to begin with in the slicing
@@ -968,9 +971,9 @@ inline Tensor strided_slice(const Tensor& x, const Array<Integer>& begin, const 
  *
  * \return A Tensor whose op member is the split operation
  */
-inline Array<Tensor> split_sections(const Tensor& x, int num_sections, int axis,
-                                    std::string name = "T_split_sections",
-                                    std::string tag = kInjective) {
+inline Array<Tensor> split_n_sections(const Tensor& x, int num_sections, int axis,
+                                      std::string name = "T_split_sections",
+                                      std::string tag = kInjective) {
   if (axis < 0) {
     axis += static_cast<int>(x->shape.size());
   }
@@ -980,14 +983,8 @@ inline Array<Tensor> split_sections(const Tensor& x, int num_sections, int axis,
 
   ICHECK_GT(num_sections, 0) << "Slice count must be > 0";
 
-  if (auto node = src_axis_size.as<IntImmNode>()) {
-    ICHECK_EQ(node->value % num_sections, 0)
-        << "num_sections must be an integer factor of the size of axis " << axis << " ("
-        << node->value << ")";
-  }
-
   Array<PrimExpr> split_indices;
-  auto seg_size = indexdiv(src_axis_size, num_sections);
+  auto seg_size = indexdiv(src_axis_size + num_sections - 1, num_sections);
   for (int i = 0; i < num_sections; ++i) {
     // region at index 0 is added by split()
     if (i != 0) {
@@ -995,7 +992,7 @@ inline Array<Tensor> split_sections(const Tensor& x, int num_sections, int axis,
     }
   }
 
-  return split(x, split_indices, axis, name, tag);
+  return split_indices_array(x, split_indices, axis, name, tag);
 }
 
 /*!
@@ -1011,7 +1008,7 @@ inline Array<Tensor> split_sections(const Tensor& x, int num_sections, int axis,
  * \return A Tensor whose op member is the take operation
  */
 inline Tensor take(const Tensor& a, const Tensor& indices, int batch_dims,
-                   std::string mode = "clip", std::string name = "T_take",
+                   std::string mode = "fast", std::string name = "T_take",
                    std::string tag = kInjective) {
   Array<PrimExpr> a_shape = a->shape;
   Array<PrimExpr> out_shape = indices->shape;
@@ -1034,6 +1031,16 @@ inline Tensor take(const Tensor& a, const Tensor& indices, int batch_dims,
     return compute(
         out_shape,
         [&](const Array<Var>& out_index) { return a(UnravelIndex(indices(out_index), a_shape)); },
+        name, tag);
+  } else if (mode == "nan") {
+    return compute(
+        out_shape,
+        [&](const Array<Var>& out_index) {
+          auto idx = tvm::if_then_else(
+              indices(out_index) < 0 || indices(out_index) >= a_size,
+              tvm::FloatImm(a->dtype, std::numeric_limits<float>::quiet_NaN()), indices(out_index));
+          return a(UnravelIndex(idx, a_shape));
+        },
         name, tag);
   } else {  // mode == "wrap"
     return compute(
@@ -1097,7 +1104,7 @@ inline Tensor sequence_mask(const Tensor& data, const Tensor& valid_length, doub
  * \return A Tensor whose op member is the take operation
  */
 inline Tensor take(const Tensor& a, Variant<Tensor, PrimExpr> indices, int batch_dims, int axis,
-                   std::string mode = "clip", std::string name = "T_take",
+                   std::string mode = "fast", std::string name = "T_take",
                    std::string tag = kInjective) {
   if (axis < 0) {
     axis += static_cast<int>(a->shape.size());
@@ -1209,6 +1216,8 @@ inline Tensor take(const Tensor& a, Variant<Tensor, PrimExpr> indices, int batch
           name, tag);
     }
   } else if (mode == "fast") {
+    LOG(WARNING) << "Fast mode segfaults when there are out-of-bounds indices. "
+                    "Make sure input indices are in bound";
     return compute(
         out_shape,
         [&](const Array<Var>& out_index) {
@@ -1225,6 +1234,29 @@ inline Tensor take(const Tensor& a, Variant<Tensor, PrimExpr> indices, int batch
             real_indices.push_back(out_index[j]);
           }
           return a(real_indices);
+        },
+        name, tag);
+  } else if (mode == "nan") {
+    return compute(
+        out_shape,
+        [&](const Array<Var>& out_index) {
+          Array<PrimExpr> indices_position;
+          for (size_t j = axis; j < static_cast<size_t>(axis + indices_len); ++j) {
+            indices_position.push_back(out_index[j]);
+          }
+          Array<PrimExpr> real_indices;
+          for (size_t j = 0; j < static_cast<size_t>(axis); ++j) {
+            real_indices.push_back(out_index[j]);
+          }
+          PrimExpr idx = get_index(indices_position);
+          real_indices.push_back(idx);
+          for (size_t j = axis + indices_len; j < out_index.size(); ++j) {
+            real_indices.push_back(out_index[j]);
+          }
+          PrimExpr in_bounds = idx >= 0 && idx < axis_dim;
+          return tvm::if_then_else(
+              in_bounds, a(real_indices),
+              tvm::tir::make_const(a->dtype, std::numeric_limits<float>::quiet_NaN()));
         },
         name, tag);
   } else {  // mode == "wrap"
@@ -1759,11 +1791,11 @@ inline Tensor layout_transform(const Tensor& src, const std::string& src_layout,
 
   Array<PrimExpr> dst_shape = layout_converter.ForwardShape(src->shape);
 
-  Map<String, ObjectRef> attrs = {{"schedule_rule", String(schedule_rule)},
-                                  // Information about layouts needed for the schedule rule
-                                  {"src_layout", String(src_layout)},
-                                  {"dst_layout", String(dst_layout)},
-                                  {"input_shape", src->shape}};
+  Map<String, ffi::Any> attrs = {{"schedule_rule", String(schedule_rule)},
+                                 // Information about layouts needed for the schedule rule
+                                 {"src_layout", String(src_layout)},
+                                 {"dst_layout", String(dst_layout)},
+                                 {"input_shape", src->shape}};
 
   return compute(
       dst_shape,

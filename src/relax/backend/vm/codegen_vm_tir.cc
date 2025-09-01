@@ -21,12 +21,12 @@
  * \file src/relax/backend/vm/codegen_tir.cc
  * \brief A codegen to generate VMTIR function(that can be compiled) from executable.
  */
-#include <tvm/driver/driver_api.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/ir/module.h>
 #include <tvm/relax/exec_builder.h>
 #include <tvm/relax/expr_functor.h>
 #include <tvm/relax/op_attr_types.h>
-#include <tvm/runtime/relax_vm/executable.h>
+#include <tvm/runtime/vm/executable.h>
 #include <tvm/target/target.h>
 #include <tvm/tir/builtin.h>
 #include <tvm/tir/expr.h>
@@ -40,7 +40,7 @@
 
 namespace tvm {
 namespace relax {
-namespace relax_vm {
+namespace codegen_vm {
 
 using vm::VMFuncInfo;
 
@@ -127,7 +127,7 @@ class CodeGenVMTIR : public ExprFunctor<Optional<PrimExpr>(const Expr&)> {
   void EmitCallCPacked(const tir::PrimFunc& prim_func, const Array<PrimExpr>& args,
                        int64_t dst_anylist_slot = -1) {
     Optional<String> gsymbol = prim_func->GetAttr<String>(tvm::attr::kGlobalSymbol);
-    ICHECK(gsymbol.defined()) << "All functions must have global symbol at this phase";
+    ICHECK(gsymbol.has_value()) << "All functions must have global symbol at this phase";
     Array<PrimExpr> all_args;
     // negative index indicate return value can be discarded, emit call_packed
     if (dst_anylist_slot >= 0) {
@@ -137,9 +137,6 @@ class CodeGenVMTIR : public ExprFunctor<Optional<PrimExpr>(const Expr&)> {
     for (PrimExpr arg : args) {
       all_args.push_back(arg);
     }
-    // push an empty handle to be compatible with current cpacked convention
-    // TODO(tqchen): revisit C Packed convention
-    all_args.push_back(tir::make_zero(DataType::Handle()));
     if (dst_anylist_slot >= 0) {
       this->EmitStmt(tir::Evaluate(
           tir::Call(DataType::Int(32), tir::builtin::anylist_setitem_call_cpacked(), all_args)));
@@ -151,8 +148,8 @@ class CodeGenVMTIR : public ExprFunctor<Optional<PrimExpr>(const Expr&)> {
 
   tir::PrimFunc Codegen(const Function& func) {
     Optional<String> gsymbol = func->GetAttr<String>(tvm::attr::kGlobalSymbol);
-    ICHECK(gsymbol.defined()) << "there should be no local functions in Relax VM codegen phase. "
-                                 "Did you forget to apply LambdaLift or AttachGlobalSymbol Pass?";
+    ICHECK(gsymbol.has_value()) << "there should be no local functions in Relax VM codegen phase. "
+                                   "Did you forget to apply LambdaLift or AttachGlobalSymbol Pass?";
     // initialize the state
     stmt_stack_ = {};
     registers_num_ = 0;
@@ -251,7 +248,7 @@ class CodeGenVMTIR : public ExprFunctor<Optional<PrimExpr>(const Expr&)> {
     if (dst_reg >= 0) {
       return RegListGet(dst_reg);
     } else {
-      return NullOpt;
+      return std::nullopt;
     }
   }
 
@@ -295,7 +292,7 @@ class CodeGenVMTIR : public ExprFunctor<Optional<PrimExpr>(const Expr&)> {
         LOG(FATAL) << "Should only use constant shape after shape lowering: " << op->values;
       }
     }
-    return ConstListGet(builder_->ConvertConstant(ShapeTuple(shape)).value());
+    return ConstListGet(builder_->ConvertConstant(ffi::Shape(shape)).value());
   }
 
   Optional<PrimExpr> VisitExpr_(const PrimValueNode* op) final { return op->value; }
@@ -360,13 +357,13 @@ class CodeGenVMTIR : public ExprFunctor<Optional<PrimExpr>(const Expr&)> {
       *kind = VMFuncInfo::FuncKind::kPackedFunc;
       return gvar->name_hint;
     } else {
-      return NullOpt;
+      return std::nullopt;
     }
   }
   // Lookup PrimFunc in the same module
   // We can do direct PrimFunc call in such cases
   Optional<tir::PrimFunc> LookupPrimFunc(const String& name) {
-    if (!ctx_mod_->ContainGlobalVar(name)) return NullOpt;
+    if (!ctx_mod_->ContainGlobalVar(name)) return std::nullopt;
 
     GlobalVar gvar = ctx_mod_->GetGlobalVar(name);
     auto it = ctx_mod_->functions.find(gvar);
@@ -376,13 +373,13 @@ class CodeGenVMTIR : public ExprFunctor<Optional<PrimExpr>(const Expr&)> {
         return GetRef<tir::PrimFunc>(prim_func);
       }
     }
-    return NullOpt;
+    return std::nullopt;
   }
 
   Optional<PrimExpr> VisitExpr_(const GlobalVarNode* op) final {
     VMFuncInfo::FuncKind kind;
     auto symbol = LookupFunction(GetRef<Expr>(op), &kind);
-    ICHECK(symbol.defined());
+    ICHECK(symbol.has_value());
     builder_->DeclareFunction(symbol.value(), kind);
     return FuncListGet(builder_->GetFunction(symbol.value()).value());
   }
@@ -455,7 +452,7 @@ class CodeGenVMTIR : public ExprFunctor<Optional<PrimExpr>(const Expr&)> {
     VMFuncInfo::FuncKind kind;
     auto symbol = LookupFunction(call_node->op, &kind);
 
-    if (symbol.defined() && kind == VMFuncInfo::FuncKind::kPackedFunc) {
+    if (symbol.has_value() && kind == VMFuncInfo::FuncKind::kPackedFunc) {
       // primfunc in the same module.
       // use cpacked to directly invoke without named based lookup
       if (Optional<tir::PrimFunc> prim_func = LookupPrimFunc(symbol.value())) {
@@ -534,8 +531,11 @@ IRModule VMTIRCodeGen(ExecBuilder exec_builder, IRModule mod) {
   return CodeGenVMTIR::Run(exec_builder, mod);
 }
 
-TVM_REGISTER_GLOBAL("relax.VMTIRCodeGen").set_body_typed(VMTIRCodeGen);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.VMTIRCodeGen", VMTIRCodeGen);
+});
 
-}  // namespace relax_vm
+}  // namespace codegen_vm
 }  // namespace relax
 }  // namespace tvm

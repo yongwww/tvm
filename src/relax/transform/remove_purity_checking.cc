@@ -20,6 +20,7 @@
  * \file src/relax/transform/remove_purity_checking.cc
  * \brief Apply kForcePure in all pure functions and unwrap all calls to pure overrides
  */
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/expr_functor.h>
 #include <tvm/relax/struct_info.h>
 #include <tvm/relax/transform.h>
@@ -36,7 +37,7 @@ class PurityRemover : public ExprMutator {
     bool purity = func->is_pure;
     auto ret = func;
     if (purity) {
-      ret = std::move(WithAttr<Function>(func, relax::attr::kForcePure, Bool(true)));
+      ret = WithAttr<Function>(func, relax::attr::kForcePure, true);
     }
     auto new_body = VisitExpr(ret->body);
     if (!new_body.same_as(ret->body)) {
@@ -82,14 +83,16 @@ Function RemovePurityChecking(const Function& f) { return PurityRemover().Remove
 namespace transform {
 
 Pass RemovePurityChecking() {
-  runtime::TypedPackedFunc<Function(Function, IRModule, PassContext)> pass_func =
-      [=](const Function& f, IRModule mod, PassContext pc) {
-        return relax::RemovePurityChecking(f);
-      };
+  auto pass_func = [=](const Function& f, IRModule mod, PassContext pc) {
+    return relax::RemovePurityChecking(f);
+  };
   return CreateFunctionPass(pass_func, 0, "RemovePurityChecking", {});
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.RemovePurityChecking").set_body_typed(RemovePurityChecking);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.transform.RemovePurityChecking", RemovePurityChecking);
+});
 
 }  // namespace transform
 

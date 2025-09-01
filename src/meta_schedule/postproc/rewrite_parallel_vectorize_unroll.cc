@@ -16,6 +16,8 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+#include <tvm/ffi/reflection/registry.h>
+
 #include "../utils.h"
 
 namespace tvm {
@@ -106,23 +108,23 @@ bool ParseAnnotation(const Block& block, ParsedAnnotation* parsed) {
   for (const auto& ann : block->annotations) {
     if (ann.first == attr::meta_schedule_parallel) {
       found = true;
-      if (const auto* imm = ann.second.as<tir::IntImmNode>()) {
-        parsed->max_parallel_extent = imm->value;
+      if (auto opt_int_imm = ann.second.try_cast<IntImm>()) {
+        parsed->max_parallel_extent = (*opt_int_imm)->value;
       }
     } else if (ann.first == attr::meta_schedule_vectorize) {
       found = true;
-      if (const auto* imm = ann.second.as<tir::IntImmNode>()) {
-        parsed->max_vectorize_extent = imm->value;
+      if (auto opt_int_imm = ann.second.try_cast<IntImm>()) {
+        parsed->max_vectorize_extent = (*opt_int_imm)->value;
       }
     } else if (ann.first == attr::meta_schedule_unroll_explicit) {
       found = true;
-      if (const auto* imm = ann.second.as<tir::IntImmNode>()) {
-        parsed->unroll_explicit = imm->value;
+      if (auto opt_int_imm = ann.second.try_cast<IntImm>()) {
+        parsed->unroll_explicit = (*opt_int_imm)->value;
       }
     } else if (ann.first == attr::meta_schedule_unroll_implicit) {
       found = true;
-      if (const auto* imm = ann.second.as<tir::IntImmNode>()) {
-        parsed->unroll_implicit = imm->value;
+      if (auto opt_int_imm = ann.second.try_cast<IntImm>()) {
+        parsed->unroll_implicit = (*opt_int_imm)->value;
       }
     }
   }
@@ -358,7 +360,7 @@ bool FindAnnotatedRootBlock(const Schedule& sch, ParsedAnnotation* parsed, Block
 void RewriteFuseSplitParallelVectorize(const Schedule& sch, Array<LoopRV>* loop_rvs, int vec_len) {
   size_t n_loops = loop_rvs->size();
   LoopRV fused = sch->Fuse({loop_rvs->begin(), loop_rvs->end()});
-  Array<LoopRV> split = sch->Split(fused, {NullOpt, Integer(vec_len)});
+  Array<LoopRV> split = sch->Split(fused, {std::nullopt, Integer(vec_len)});
   ICHECK_EQ(split.size(), 2);
   const LoopRV& outer = split[0];
   const LoopRV& inner = split[1];
@@ -463,9 +465,11 @@ Postproc Postproc::RewriteParallelVectorizeUnroll() {
   return Postproc(n);
 }
 
-TVM_REGISTER_NODE_TYPE(RewriteParallelVectorizeUnrollNode);
-TVM_REGISTER_GLOBAL("meta_schedule.PostprocRewriteParallelVectorizeUnroll")
-    .set_body_typed(Postproc::RewriteParallelVectorizeUnroll);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("meta_schedule.PostprocRewriteParallelVectorizeUnroll",
+                        Postproc::RewriteParallelVectorizeUnroll);
+});
 
 }  // namespace meta_schedule
 }  // namespace tvm

@@ -21,6 +21,9 @@
  * \file src/relax/block_builder.cc
  */
 #include <tvm/arith/analyzer.h>
+#include <tvm/ffi/extra/structural_hash.h>
+#include <tvm/ffi/function.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/analysis.h>
 #include <tvm/relax/block_builder.h>
 #include <tvm/relax/expr_functor.h>
@@ -29,16 +32,12 @@
 #include <tvm/relax/struct_info_functor.h>
 #include <tvm/relax/transform.h>
 #include <tvm/relax/type.h>
-#include <tvm/relay/op.h>
-#include <tvm/runtime/registry.h>
 #include <tvm/tir/function.h>
 
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-
-#include "../../node/ndarray_hash_equal.h"
 
 // Block builder have three categories of logics that are interdependent with each other.
 //
@@ -96,7 +95,7 @@ class BlockBuilderImpl : public BlockBuilderNode {
         // TODO(relax-team): add fine-grained PrimFunc struct info signature generation.
         finfo = FuncStructInfo::OpaqueFunc(StructInfoFromType(prim_func->ret_type));
       } else {
-        finfo = StructInfoFromType(func->checked_type());
+        TVM_FFI_THROW(RuntimeError) << "Expect struct_info field to be populated";
       }
       UpdateStructInfo(gvar, finfo);
 
@@ -163,7 +162,7 @@ class BlockBuilderImpl : public BlockBuilderNode {
   //-------------------------------
   Optional<Expr> LookupBinding(const Var& var) final {
     auto it = binding_table_.find(var->vid);
-    if (it == binding_table_.end()) return NullOpt;
+    if (it == binding_table_.end()) return std::nullopt;
     return it->second;
   }
 
@@ -419,8 +418,8 @@ class BlockBuilderImpl : public BlockBuilderNode {
       name_hint = is_dataflow ? "lv" : "gv";
     }
     Id vid = Id(GetUniqueName(name_hint));
-    return is_dataflow ? DataflowVar(vid, /*struct_info_annotation=*/NullOpt)
-                       : Var(vid, /*struct_info_annotation=*/NullOpt);
+    return is_dataflow ? DataflowVar(vid, /*struct_info_annotation=*/std::nullopt)
+                       : Var(vid, /*struct_info_annotation=*/std::nullopt);
   }
 
  private:
@@ -429,12 +428,11 @@ class BlockBuilderImpl : public BlockBuilderNode {
   }
 
   /*! \brief A custom structural hashing that ignores NDArray raw data. */
-  class StructuralHashIgnoreNDarray : public BaseValueHash {
+  class StructuralHashIgnoreNDarray {
    public:
-    using BaseValueHash::operator();
-
     uint64_t operator()(const ObjectRef& key) const {
-      return SHashHandlerIgnoreNDArray().Hash(key, false);
+      return ffi::StructuralHash::Hash(key, /*map_free_vars=*/false,
+                                       /*skip_ndarray_content=*/true);
     }
   };
 
@@ -867,12 +865,12 @@ class Normalizer : public BlockBuilderImpl, private ExprFunctor<Expr(const Expr&
     auto f_shape_var_map = [curr_scope](tir::Var var) -> Optional<PrimExpr> {
       auto it = curr_scope->shape_var_map.find(var);
       if (it != curr_scope->shape_var_map.end()) return (*it).second;
-      return NullOpt;
+      return std::nullopt;
     };
     return EraseToWellDefined(info, f_shape_var_map);
   }
 
-  Expr VisitWithNewScope(const Expr& expr, Optional<Array<Var>> params = NullOpt) {
+  Expr VisitWithNewScope(const Expr& expr, Optional<Array<Var>> params = std::nullopt) {
     if (params.defined()) {
       this->BeginScope(params.value());
     } else {
@@ -1053,72 +1051,44 @@ BlockBuilder BlockBuilder::Create(Optional<IRModule> mod,
 //---------------------------------------
 // User facing function registration.
 //---------------------------------------
-TVM_REGISTER_OBJECT_TYPE(BlockBuilderNode);
 
-TVM_REGISTER_GLOBAL("relax.BlockBuilderCreate").set_body_typed([](Optional<IRModule> mod) {
-  return BlockBuilder::Create(mod);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef()
+      .def("relax.BlockBuilderCreate",
+           [](Optional<IRModule> mod) { return BlockBuilder::Create(mod); })
+      .def_method("relax.BlockBuilderBeginDataflowBlock", &BlockBuilderNode::BeginDataflowBlock)
+      .def_method("relax.BlockBuilderBeginBindingBlock", &BlockBuilderNode::BeginBindingBlock)
+      .def_method("relax.BlockBuilderEndBlock", &BlockBuilderNode::EndBlock)
+      .def_method("relax.BlockBuilderNormalize", &BlockBuilderNode::Normalize)
+      .def("relax.BlockBuilderEmit",
+           [](BlockBuilder builder, Expr expr, String name_hint) {
+             return builder->Emit(expr, name_hint);
+           })
+      .def("relax.BlockBuilderEmitMatchCast",
+           [](BlockBuilder builder, Expr value, StructInfo struct_info, String name_hint) {
+             return builder->EmitMatchCast(value, struct_info, name_hint);
+           })
+      .def("relax.BlockBuilderEmitOutput",
+           [](BlockBuilder builder, const Expr& output, String name_hint) {
+             return builder->EmitOutput(output, name_hint);
+           })
+      .def("relax.BlockBuilderEmitNormalized",
+           [](BlockBuilder builder, Binding binding) { return builder->EmitNormalized(binding); })
+      .def("relax.BlockBuilderGetUniqueName",
+           [](BlockBuilder builder, String name_hint) {
+             return builder->name_supply()->FreshName(name_hint, /*add_prefix*/ false,
+                                                      /*add_underscore*/ false);
+           })
+      .def_method("relax.BlockBuilderAddFunction", &BlockBuilderNode::AddFunction)
+      .def_method("relax.BlockBuilderUpdateFunction", &BlockBuilderNode::UpdateFunction)
+      .def_method("relax.BlockBuilderGetContextIRModule", &BlockBuilderNode::GetContextIRModule)
+      .def_method("relax.BlockBuilderFinalize", &BlockBuilderNode::Finalize)
+      .def_method("relax.BlockBuilderCurrentBlockIsDataFlow",
+                  &BlockBuilderNode::CurrentBlockIsDataFlow)
+      .def_method("relax.BlockBuilderLookupBinding", &BlockBuilderNode::LookupBinding)
+      .def_method("relax.BlockBuilderBeginScope", &BlockBuilderNode::BeginScope)
+      .def_method("relax.BlockBuilderEndScope", &BlockBuilderNode::EndScope);
 });
-
-TVM_REGISTER_GLOBAL("relax.BlockBuilderBeginDataflowBlock")
-    .set_body_method<BlockBuilder>(&BlockBuilderNode::BeginDataflowBlock);
-
-TVM_REGISTER_GLOBAL("relax.BlockBuilderBeginBindingBlock")
-    .set_body_method<BlockBuilder>(&BlockBuilderNode::BeginBindingBlock);
-
-TVM_REGISTER_GLOBAL("relax.BlockBuilderEndBlock")
-    .set_body_method<BlockBuilder>(&BlockBuilderNode::EndBlock);
-
-TVM_REGISTER_GLOBAL("relax.BlockBuilderNormalize")
-    .set_body_method<BlockBuilder>(&BlockBuilderNode::Normalize);
-
-TVM_REGISTER_GLOBAL("relax.BlockBuilderEmit")
-    .set_body_typed([](BlockBuilder builder, Expr expr, String name_hint) {
-      return builder->Emit(expr, name_hint);
-    });
-
-TVM_REGISTER_GLOBAL("relax.BlockBuilderEmitMatchCast")
-    .set_body_typed([](BlockBuilder builder, Expr value, StructInfo struct_info, String name_hint) {
-      return builder->EmitMatchCast(value, struct_info, name_hint);
-    });
-
-TVM_REGISTER_GLOBAL("relax.BlockBuilderEmitOutput")
-    .set_body_typed([](BlockBuilder builder, const Expr& output, String name_hint) {
-      return builder->EmitOutput(output, name_hint);
-    });
-
-TVM_REGISTER_GLOBAL("relax.BlockBuilderEmitNormalized")
-    .set_body_typed([](BlockBuilder builder, Binding binding) {
-      return builder->EmitNormalized(binding);
-    });
-
-TVM_REGISTER_GLOBAL("relax.BlockBuilderGetUniqueName")
-    .set_body_typed([](BlockBuilder builder, String name_hint) {
-      return builder->name_supply()->FreshName(name_hint, /*add_prefix*/ false,
-                                               /*add_underscore*/ false);
-    });
-
-TVM_REGISTER_GLOBAL("relax.BlockBuilderAddFunction")
-    .set_body_method<BlockBuilder>(&BlockBuilderNode::AddFunction);
-
-TVM_REGISTER_GLOBAL("relax.BlockBuilderUpdateFunction")
-    .set_body_method<BlockBuilder>(&BlockBuilderNode::UpdateFunction);
-
-TVM_REGISTER_GLOBAL("relax.BlockBuilderGetContextIRModule")
-    .set_body_method<BlockBuilder>(&BlockBuilderNode::GetContextIRModule);
-
-TVM_REGISTER_GLOBAL("relax.BlockBuilderFinalize")
-    .set_body_method<BlockBuilder>(&BlockBuilderNode::Finalize);
-
-TVM_REGISTER_GLOBAL("relax.BlockBuilderCurrentBlockIsDataFlow")
-    .set_body_method<BlockBuilder>(&BlockBuilderNode::CurrentBlockIsDataFlow);
-
-TVM_REGISTER_GLOBAL("relax.BlockBuilderLookupBinding")
-    .set_body_method<BlockBuilder>(&BlockBuilderNode::LookupBinding);
-
-TVM_REGISTER_GLOBAL("relax.BlockBuilderBeginScope")
-    .set_body_method<BlockBuilder>(&BlockBuilderNode::BeginScope);
-
-TVM_REGISTER_GLOBAL("relax.BlockBuilderEndScope")
-    .set_body_method<BlockBuilder>(&BlockBuilderNode::EndScope);
 }  // namespace relax
 }  // namespace tvm

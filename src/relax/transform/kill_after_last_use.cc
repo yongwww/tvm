@@ -21,6 +21,7 @@
  * \brief Kill storage/tensor objects after last use, if not already killed
  */
 #include <tvm/arith/analyzer.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/relax/analysis.h>
 #include <tvm/relax/expr_functor.h>
 #include <tvm/relax/nested_msg.h>
@@ -259,14 +260,16 @@ Expr KillAfterLastUse(Expr expr) {
 namespace transform {
 
 Pass KillAfterLastUse() {
-  runtime::TypedPackedFunc<Function(Function, IRModule, PassContext)> pass_func =
-      [=](Function func, IRModule m, PassContext pc) {
-        return Downcast<Function>(relax::KillAfterLastUse(std::move(func)));
-      };
+  auto pass_func = [=](Function func, IRModule m, PassContext pc) {
+    return Downcast<Function>(relax::KillAfterLastUse(std::move(func)));
+  };
   return CreateFunctionPass(pass_func, /*opt_level=*/0, "KillAfterLastUse", {});
 }
 
-TVM_REGISTER_GLOBAL("relax.transform.KillAfterLastUse").set_body_typed(KillAfterLastUse);
+TVM_FFI_STATIC_INIT_BLOCK({
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("relax.transform.KillAfterLastUse", KillAfterLastUse);
+});
 
 }  // namespace transform
 }  // namespace relax
